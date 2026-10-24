@@ -40,14 +40,13 @@ public sealed class MediaTrayIcons : IDisposable
     private readonly Dictionary<string, Icon> _icons = new();
     private bool _enabled;
     private bool _shown;
-    private bool _promoteChecked;
 
     public MediaTrayIcons(SpotifyService spotify, Dispatcher dispatcher, Action showMenu)
     {
         _spotify = spotify;
         _dispatcher = dispatcher;
 
-        // Порядок создания = порядок слева направо в трее
+        // Порядок создания не менять: Windows помнит, показан ли значок на панели, по его номеру
         _previous = Create("Spotify: предыдущий трек", _spotify.Previous);
         _playPause = Create("Spotify", _spotify.TogglePlayPause);
         _next = Create("Spotify: следующий трек", _spotify.Next);
@@ -87,22 +86,10 @@ public sealed class MediaTrayIcons : IDisposable
         if (show == _shown)
             return;
         _shown = show;
-        _previous.Visible = show;
-        _playPause.Visible = show;
+        // Windows ставит только что добавленный значок левее прежних, поэтому добавляем справа налево
         _next.Visible = show;
-
-        if (show && !_promoteChecked)
-        {
-            _promoteChecked = true;
-            // Explorer заводит запись о значке не сразу после добавления — проверяем несколько раз
-            int attempts = 0;
-            _ = new DispatcherTimer(TimeSpan.FromSeconds(3), DispatcherPriority.Background, (s, _) =>
-            {
-                PromoteIcons();
-                if (++attempts >= 3)
-                    ((DispatcherTimer)s!).Stop();
-            }, _dispatcher);
-        }
+        _playPause.Visible = show;
+        _previous.Visible = show;
     }
 
     private static string Trim(string text) => text.Length > 127 ? text[..126] + "…" : text;
@@ -185,37 +172,6 @@ public sealed class MediaTrayIcons : IDisposable
         }
         ico.Position = 0;
         return new Icon(ico);
-    }
-
-    /// <summary>
-    /// Windows 11 прячет новые значки за стрелку. Один раз показываем свои значки на панели —
-    /// только если пользователь ещё не решал сам (значение IsPromoted отсутствует; спрятанный вручную значок
-    /// получает IsPromoted = 0 и остаётся спрятанным).
-    /// </summary>
-    private static void PromoteIcons()
-    {
-        try
-        {
-            var exe = Environment.ProcessPath;
-            if (exe == null)
-                return;
-
-            using var root = Registry.CurrentUser.OpenSubKey(@"Control Panel\NotifyIconSettings");
-            if (root == null)
-                return;
-            foreach (var name in root.GetSubKeyNames())
-            {
-                using var key = root.OpenSubKey(name, writable: true);
-                if (key?.GetValue("ExecutablePath") is string path
-                    && string.Equals(path, exe, StringComparison.OrdinalIgnoreCase)
-                    && key.GetValue("IsPromoted") == null)
-                    key.SetValue("IsPromoted", 1, RegistryValueKind.DWord);
-            }
-        }
-        catch (Exception)
-        {
-            // Не вышло — значки останутся под стрелкой, их можно вытащить вручную.
-        }
     }
 
     public void Dispose()
