@@ -142,11 +142,22 @@ public partial class DesktopLyricsView : UserControl
         private bool _running;
         private bool _forward;
         private double _overflow;
+        /// <summary>
+        /// Снятая анимация всё равно присылает Completed, когда доходит до конца. Без счётчика прокрутка
+        /// прежнего длинного названия «оживала» у нового короткого и прижимала его к правому краю.
+        /// </summary>
+        private int _generation;
 
         public Marquee(FrameworkElement text, TranslateTransform shift)
         {
             _text = text;
             _shift = shift;
+            // Обрезаем только по бокам: хвосты «y», «g», «р» выходят ниже строки и не должны срезаться
+            if (text.Parent is FrameworkElement box)
+            {
+                box.ClipToBounds = false;
+                box.Clip = new RectangleGeometry(new Rect(0, -box.Height, box.Width, box.Height * 3));
+            }
             _text.SizeChanged += (_, _) => Restart();
             _pause.Tick += (_, _) =>
             {
@@ -170,6 +181,7 @@ public partial class DesktopLyricsView : UserControl
         public void Restart()
         {
             _pause.Stop();
+            _generation++;
             _shift.BeginAnimation(TranslateTransform.XProperty, null);
             _shift.X = 0;
             _forward = true;
@@ -208,16 +220,19 @@ public partial class DesktopLyricsView : UserControl
 
         private void Scroll()
         {
-            if (!_running)
+            // Помещается целиком — стоит на месте
+            if (!_running || _overflow <= 1)
                 return;
+            int generation = _generation;
             var animation = new DoubleAnimation(_forward ? -_overflow : 0, TimeSpan.FromSeconds(Math.Max(1, _overflow / Speed)))
             {
                 EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
             };
-            Timeline.SetDesiredFrameRate(animation, 30);
+            // При 30 кадрах медленная строка заметно дёргалась; анимация идёт только в пути, в паузах кадров нет
+            Timeline.SetDesiredFrameRate(animation, 60);
             animation.Completed += (_, _) =>
             {
-                if (!_running)
+                if (!_running || generation != _generation)
                     return;
                 _forward = !_forward;
                 SetMask(_forward ? FadeRight : FadeLeft);

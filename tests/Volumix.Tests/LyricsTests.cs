@@ -149,6 +149,70 @@ public class LyricsTests
             (await LyricsService.FetchGeniusAsync("Numb", "Ёлка", CancellationToken.None)).Status);
     }
 
+    [Fact]
+    public void SecondTierPrefersSyncedNetEase()
+    {
+        var synced = Lyrics.FromLrc(SyncedLrc);
+        var plain = Lyrics.FromPlain("раз\nдва");
+        Assert.Same(synced, LyricsService.PickSecondTier(plain, synced));
+        Assert.Same(plain, LyricsService.PickSecondTier(plain, Lyrics.FromPlain("другой")));
+        Assert.Equal(LyricsStatus.Plain, LyricsService.PickSecondTier(Lyrics.Error, plain).Status);
+        Assert.Equal(LyricsStatus.NotFound, LyricsService.PickSecondTier(Lyrics.Error, Lyrics.NotFound).Status);
+        Assert.Equal(LyricsStatus.NotFound, LyricsService.PickSecondTier(Lyrics.Error, Lyrics.Error).Status);
+        Assert.Equal(LyricsStatus.Error, LyricsService.PickSecondTier(Lyrics.Error, Lyrics.Error, Lyrics.Error).Status);
+        // Русский сайт важнее текста NetEase без меток
+        var site = Lyrics.FromPlain("с сайта");
+        Assert.Same(site, LyricsService.PickSecondTier(Lyrics.NotFound, plain, site));
+    }
+
+    [Fact]
+    public void ParsesTextLyricsPage()
+    {
+        const string html = """
+            <nav>меню</nav><div id="entry_content" style="font-size:18px;">[Текст песни «Прощаться»]<br /><br />Когда затянутся раны неба<br />И&nbsp;злая гроза погибнет<br /><br /><div id="ad"></div>Мой храм падет</div><div id="fixed_cblock"></div>
+            """;
+        Assert.Equal("Когда затянутся раны неба\nИ злая гроза погибнет\n\nМой храм падет", LyricsService.ParseTextLyricsPage(html));
+        Assert.Null(LyricsService.ParseTextLyricsPage("<html></html>"));
+    }
+
+    [SkippableFact]
+    public async Task FindsRussianLyricsOnTextLyrics()
+    {
+        var lyrics = await LyricsService.FetchTextLyricsAsync("Прощаться", "Грель", CancellationToken.None);
+        Skip.If(lyrics.Status == LyricsStatus.Error, "text-lyrics.ru недоступен");
+
+        Assert.Equal(LyricsStatus.Plain, lyrics.Status);
+        Assert.Equal("Когда затянутся раны неба", lyrics.Lines[0].Text);
+        Assert.Contains(lyrics.Lines, l => l.Text == "Я привыкла прощаться с тобой");
+        Assert.Equal(LyricsStatus.NotFound,
+            (await LyricsService.FetchTextLyricsAsync("Прощаться", "Абракадабра Несуществующая", CancellationToken.None)).Status);
+
+        // Весь путь: первая очередь её не знает, вторая находит на text-lyrics.ru
+        var found = await LyricsService.FindAsync("Прощаться", "Грель", null, TimeSpan.FromSeconds(183), CancellationToken.None);
+        Assert.Equal(LyricsStatus.Plain, found.Status);
+        Assert.Equal("Когда затянутся раны неба", found.Lines[0].Text);
+    }
+
+    [SkippableFact]
+    public async Task FindsSyncedLyricsOnNetEase()
+    {
+        var lyrics = await LyricsService.FetchNetEaseAsync("Numb", "Linkin Park", 187, 3, CancellationToken.None);
+        Skip.If(lyrics.Status == LyricsStatus.Error, "music.163.com недоступен");
+
+        Assert.Equal(LyricsStatus.Synced, lyrics.Status);
+        // Строки «作词 : …» и «作曲 : …» с авторами отброшены — первой идёт песня
+        // Неразрывные пробелы NetEase заменены обычными, иначе строка не переносится
+        Assert.Equal("I'm tired of being what you want me to be", lyrics.Lines[0].Text);
+        Assert.DoesNotContain(lyrics.Lines, l => l.Text.Contains("作词") || l.Text.Contains("作曲"));
+        // Длительность не та (live, клип) — текст есть, но без меток, иначе он бы врал
+        Assert.Equal(LyricsStatus.Plain,
+            (await LyricsService.FetchNetEaseAsync("Numb", "Linkin Park", 260, 3, CancellationToken.None)).Status);
+        Assert.Equal(LyricsStatus.Instrumental,
+            (await LyricsService.FetchNetEaseAsync("River Flows In You", "Yiruma", 0, 3, CancellationToken.None)).Status);
+        Assert.Equal(LyricsStatus.NotFound,
+            (await LyricsService.FetchNetEaseAsync("Numb", "Ёлка", 187, 3, CancellationToken.None)).Status);
+    }
+
     /// <summary>Рисует обои вне экрана и сохраняет картинку в %TEMP%\volumix-desktop.png, чтобы на неё посмотреть.</summary>
     [Fact]
     public void RendersDesktopView()
@@ -214,6 +278,81 @@ public class LyricsTests
 
         window.Close();
         view.Stop();
+    }
+
+    /// <summary>
+    /// Короткое название стоит на месте и без затухания по краям, даже если до него играла песня с длинным;
+    /// длинное — едет. Проверяется по живому окну: ширина текста известна только после раскладки.
+    /// </summary>
+    [Fact]
+    public void ShortTitleStaysStill()
+    {
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try { CheckMarquee(); }
+            catch (Exception e) { error = e; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        Assert.Null(error);
+    }
+
+    private static void CheckMarquee()
+    {
+        var view = new DesktopLyricsView();
+        var window = new Window
+        {
+            Content = view, Width = 1536, Height = 864, Left = -20000, Top = -20000,
+            WindowStyle = WindowStyle.None, ShowInTaskbar = false, ShowActivated = false,
+        };
+        window.Show();
+        var now = DateTimeOffset.Now;
+        NowPlaying Track(string title, string artist) =>
+            new(title, artist, null, null, true, TimeSpan.Zero, now, TimeSpan.FromSeconds(200));
+        var titleBox = (FrameworkElement)view.TitleText.Parent;
+
+        // Чуть длиннее поля: прокрутка займёт несколько секунд и закончится уже после смены трека
+        view.ShowTrack(Track("Nowadays (feat. Landon)", "Lil Skies"));
+        // Пауза перед прокруткой 2,5 с; под нагрузкой параллельных тестов кадры приходят позже
+        for (int i = 0; i < 80 && view.TitleShift.X > -1; i++)
+            Pump(0.1);
+        Assert.True(view.TitleShift.X < -1, $"длинное название не поехало: X = {view.TitleShift.X}");
+
+        view.ShowTrack(Track("Nowadays", "Lil Skies"));
+        Pump(0.1);
+        Assert.Equal(0, view.TitleShift.X);
+        Assert.Null(titleBox.OpacityMask);
+        for (int i = 0; i < 10; i++)
+        {
+            Pump(1);
+            Assert.Equal(0, view.TitleShift.X);
+            Assert.Null(titleBox.OpacityMask);
+        }
+
+        // Хвост «y» не должен срезаться: ниже поля названия (58 точек) в столбце текста есть его пиксели
+        var page = view.Page;
+        var bitmap = new RenderTargetBitmap(1920, 1080, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(page);
+        var origin = titleBox.TranslatePoint(new System.Windows.Point(0, 0), page);
+        var pixels = new byte[440 * 12 * 4];
+        bitmap.CopyPixels(new Int32Rect((int)origin.X, (int)origin.Y + 58, 440, 12), pixels, 440 * 4, 0);
+        var background = new byte[440 * 12 * 4];
+        bitmap.CopyPixels(new Int32Rect((int)origin.X, (int)origin.Y + 58 + 30, 440, 12), background, 440 * 4, 0);
+        Assert.True(pixels.Max() > background.Max() + 40, "хвост буквы срезан");
+
+        window.Close();
+        view.Stop();
+    }
+
+    private static void Pump(double seconds)
+    {
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(seconds) };
+        timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
     }
 
     /// <summary>Яркая «обложка», чтобы было видно размытый фон.</summary>

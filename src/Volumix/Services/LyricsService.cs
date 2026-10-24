@@ -63,6 +63,8 @@ public static class LyricsService
 
     private static readonly HttpClient Http = CreateClient();
     private static readonly HttpClient Fallback = CreateFallback();
+    // NetEase ставит cookie на первом ответе и с ними отдаёт пустой поиск — ему отдельный клиент без cookie
+    private static readonly HttpClient NetEase = CreateFallback(useCookies: false);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly Dictionary<string, Lyrics> Cache = new();
     private static readonly Dictionary<string, (Lyrics Lyrics, int Index)> VideoCache = new();
@@ -84,9 +86,9 @@ public static class LyricsService
         return http;
     }
 
-    private static HttpClient CreateFallback()
+    private static HttpClient CreateFallback(bool useCookies = true)
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        var http = new HttpClient(new HttpClientHandler { UseCookies = useCookies }) { Timeout = TimeSpan.FromSeconds(8) };
         var version = typeof(LyricsService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"Volumix/{version}");
         return http;
@@ -188,12 +190,20 @@ public static class LyricsService
             parts.Add(RemoveExcluded(html[start..end]));
             at = end;
         }
-        if (parts.Count == 0)
-            return null;
+        return parts.Count == 0 ? null : HtmlToLyrics(string.Join("<br>", parts));
+    }
 
+    /// <summary>
+    /// HTML с текстом в строки: &lt;br&gt; — перевод строки, теги и сущности убраны, заголовки частей
+    /// «[Chorus: …]», «[Текст песни «…»]» — пустая строка между куплетами.
+    /// </summary>
+    private static string? HtmlToLyrics(string html)
+    {
         // Переводы строк в самом HTML — просто пробелы, строки задают только <br>
-        var html2 = string.Join("<br>", parts).Replace("\r", "").Replace('\n', ' ');
-        var text = System.Net.WebUtility.HtmlDecode(HtmlTag.Replace(HtmlBreak.Replace(html2, "\n"), ""));
+        var flat = html.Replace("\r", "").Replace('\n', ' ');
+        var text = System.Net.WebUtility.HtmlDecode(HtmlTag.Replace(HtmlBreak.Replace(flat, "\n"), ""));
+        // &nbsp; — неразрывный пробел: с ним длинная строка не переносится на обоях
+        text = ZeroWidth.Replace(UnicodeSpace.Replace(text, " "), "");
         var lines = new List<string>();
         foreach (var raw in text.Split('\n'))
         {
@@ -206,6 +216,57 @@ public static class LyricsService
         }
         var result = string.Join("\n", lines).Trim();
         return result.Length > 0 ? result : null;
+    }
+
+    /// <summary>
+    /// text-lyrics.ru — русская база текстов: там есть песни, которых нет ни на lrclib, ни на Genius, ни на NetEase
+    /// (например, «Грель — Прощаться»). Без меток времени. Ищем через поиск сайта, берём только песню с тем же
+    /// названием и исполнителем; текст — блок entry_content на странице песни.
+    /// </summary>
+    internal static async Task<Lyrics> FetchTextLyricsAsync(string title, string? artist, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(artist))
+            return Lyrics.NotFound; // у сайта в выдаче «Исполнитель - Название», без исполнителя не сверить
+        try
+        {
+            var query = Uri.EscapeDataString($"{FirstArtist(artist)} {title}");
+            var page = await Fallback.GetStringAsync($"https://text-lyrics.ru/index.php?do=search&subaction=search&story={query}", ct);
+
+            int best = 0;
+            string? url = null;
+            foreach (Match m in TextLyricsHit.Matches(page))
+            {
+                var name = System.Net.WebUtility.HtmlDecode(HtmlTag.Replace(m.Groups["name"].Value, "")).Trim();
+                int dash = name.IndexOf(" - ", StringComparison.Ordinal);
+                if (dash <= 0)
+                    continue;
+                int score = CoverArtService.Score(title, artist, name[(dash + 3)..], name[..dash]);
+                if (score > best)
+                    (best, url) = (score, m.Groups["url"].Value);
+            }
+            // Совпало только название — у известных названий это почти всегда другая песня
+            if (url == null || best < 4)
+                return Lyrics.NotFound;
+
+            var text = ParseTextLyricsPage(await Fallback.GetStringAsync(url, ct));
+            return text == null ? Lyrics.NotFound : Lyrics.FromPlain(text);
+        }
+        catch (Exception)
+        {
+            return Lyrics.Error; // нет сети, таймаут, отмена, сайт поменялся
+        }
+    }
+
+    private static readonly Regex TextLyricsHit = new(
+        @"<h2 class=""title""><a href=""(?<url>https://text-lyrics\.ru/[^""]+\.html)"">(?<name>.*?)</a>", RegexOptions.Singleline);
+
+    internal static string? ParseTextLyricsPage(string html)
+    {
+        int at = html.IndexOf("id=\"entry_content\"", StringComparison.Ordinal);
+        if (at < 0)
+            return null;
+        int start = html.IndexOf('>', at) + 1;
+        return start == 0 ? null : HtmlToLyrics(html[start..ElementEnd(html, start, "div")]);
     }
 
     private static readonly Regex HtmlBreak = new(@"<br\s*/?>", RegexOptions.IgnoreCase);
@@ -256,6 +317,109 @@ public static class LyricsService
         return html;
     }
 
+    /// <summary>
+    /// Вторая очередь вместе с Genius — NetEase Cloud Music: огромный каталог, в том числе западный,
+    /// и часто синхронный текст. Ключ не нужен. Берём только песню с тем же названием и исполнителем;
+    /// метки времени — только если длительность сходится, иначе они бы врали.
+    /// </summary>
+    internal static async Task<Lyrics> FetchNetEaseAsync(string title, string? artist, double seconds, double tolerance, CancellationToken ct)
+    {
+        try
+        {
+            var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{FirstArtist(artist)} {title}");
+            var json = await NetEase.GetStringAsync($"https://music.163.com/api/search/get?s={query}&type=1&limit=8", ct);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
+                return Lyrics.NotFound;
+
+            // Совпадения по названию и исполнителю, лучшие первыми, среди равных — ближайшие по длительности.
+            // Совпало только название — у известных названий («Numb», «Home») это почти всегда другая песня.
+            int threshold = string.IsNullOrWhiteSpace(artist) ? 3 : 4;
+            var matches = songs.EnumerateArray().Select(song =>
+                {
+                    var artists = song.TryGetProperty("artists", out var list) && list.ValueKind == JsonValueKind.Array
+                        ? string.Join(", ", list.EnumerateArray().Select(a => Str(a, "name")).Where(n => n != null))
+                        : null;
+                    double length = song.TryGetProperty("duration", out var d) && d.TryGetDouble(out var ms) ? ms / 1000 : 0;
+                    long id = song.TryGetProperty("id", out var i) && i.TryGetInt64(out var v) ? v : 0;
+                    return (Id: id, Length: length, Score: CoverArtService.Score(title, artist, Str(song, "name"), artists));
+                })
+                .Where(m => m.Id != 0 && m.Score >= threshold)
+                .OrderByDescending(m => m.Score)
+                .ThenBy(m => seconds > 0 && m.Length > 0 ? Math.Abs(m.Length - seconds) : 0)
+                .Take(3)
+                .ToList();
+
+            // У части версий (live, ремастер) текста на NetEase нет — берём первую, где он есть
+            string? lrc = null;
+            double duration = 0;
+            foreach (var match in matches)
+            {
+                using var lyricDoc = JsonDocument.Parse(await NetEase.GetStringAsync($"https://music.163.com/api/song/lyric?id={match.Id}&lv=1", ct));
+                var root = lyricDoc.RootElement;
+                if (root.TryGetProperty("pureMusic", out var pure) && pure.ValueKind == JsonValueKind.True)
+                    return Lyrics.Instrumental;
+                lrc = root.TryGetProperty("lrc", out var l) ? Str(l, "lyric") : null;
+                duration = match.Length;
+                if (!string.IsNullOrWhiteSpace(lrc))
+                    break;
+            }
+            if (string.IsNullOrWhiteSpace(lrc))
+                return Lyrics.NotFound;
+            // NetEase ставит между словами неразрывные пробелы — с ними длинная строка не переносится на обоях
+            lrc = ZeroWidth.Replace(UnicodeSpace.Replace(lrc, " "), "");
+
+            // В начале идут авторы: «作词 : …», «作曲 : …», «Producer: …» — это не текст песни
+            var lines = ParseLrc(lrc).Where(line => !CreditLine.IsMatch(line.Text)).ToList();
+            while (lines.Count > 0 && lines[0].Text.Length == 0)
+                lines.RemoveAt(0);
+            bool timed = seconds <= 0 || duration <= 0 || Math.Abs(duration - seconds) <= tolerance;
+            if (timed && IsSynced(lines))
+                return new(LyricsStatus.Synced, lines);
+            return lines.Count > 0 ? Lyrics.FromPlain(string.Join("\n", lines.Select(x => x.Text))) : Lyrics.NotFound;
+        }
+        catch (Exception)
+        {
+            return Lyrics.Error; // нет сети, таймаут, отмена, кривой ответ
+        }
+    }
+
+    private static readonly Regex UnicodeSpace = new(@"\p{Zs}");
+    private static readonly Regex ZeroWidth = new(@"[​-‍⁠﻿]");
+
+    private static readonly Regex CreditLine = new(
+        @"^\s*(?:作词|作曲|编曲|制作人|制作|混音|母带|和声|吉他|贝斯|鼓|录音|监制|出品|发行|词|曲|" +
+        @"lyrics?(?:\s+by)?|lyricist|written\s+by|composer|composed\s+by|producers?|produced\s+by|arranger|mix(?:ing|ed)?(?:\s+by)?|master(?:ing|ed)?(?:\s+by)?)\s*[:：]",
+        RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Вторая очередь: Genius, NetEase и text-lyrics.ru одновременно. Синхронный текст NetEase лучше всего,
+    /// потом полный текст Genius, потом text-lyrics.ru, потом текст NetEase без меток.
+    /// </summary>
+    internal static async Task<Lyrics> FetchSecondTierAsync(string title, string? artist, double seconds, double tolerance, CancellationToken ct)
+    {
+        var genius = FetchGeniusAsync(title, artist, ct);
+        var netease = FetchNetEaseAsync(title, artist, seconds, tolerance, ct);
+        var textLyrics = FetchTextLyricsAsync(title, artist, ct);
+        await Task.WhenAll(genius, netease, textLyrics);
+        return PickSecondTier(genius.Result, netease.Result, textLyrics.Result);
+    }
+
+    internal static Lyrics PickSecondTier(Lyrics genius, Lyrics netease, Lyrics? textLyrics = null)
+    {
+        textLyrics ??= Lyrics.NotFound;
+        if (netease.Status == LyricsStatus.Synced)
+            return netease;
+        foreach (var plain in new[] { genius, textLyrics, netease })
+            if (plain.Status == LyricsStatus.Plain)
+                return plain;
+        if (genius.Status == LyricsStatus.Instrumental || netease.Status == LyricsStatus.Instrumental)
+            return Lyrics.Instrumental;
+        // Ошибка — только если не ответил никто: «не нашли» хотя бы у одного запоминается
+        return new[] { genius, netease, textLyrics }.All(l => l.Status == LyricsStatus.Error) ? Lyrics.Error : Lyrics.NotFound;
+    }
+
     private static string? Str(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
@@ -271,19 +435,25 @@ public static class LyricsService
             if (Cache.TryGetValue(key, out var cached))
                 return cached;
 
+        // Первая очередь — lrclib и lyrics.ovh одновременно: резервная база не ждёт, пока lrclib ответит.
+        // Её текст нужен, только если lrclib не знает песню или недоступен (5xx).
+        using var tier1 = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var ovh = FetchFallbackAsync(title, artist, tier1.Token);
         Lyrics lyrics;
         try { lyrics = await FetchAsync(title, artist, album, duration, ct); }
         catch (Exception) { lyrics = Lyrics.Error; } // нет сети, таймаут, отмена, кривой ответ
 
-        // lrclib иногда отвечает 5xx или не знает редкую песню — тогда берём обычный (несинхронный)
-        // текст из резервной базы, чтобы песня всё равно попала на обои.
         if (lyrics.Status is LyricsStatus.Error or LyricsStatus.NotFound)
-            lyrics = await FetchFallbackAsync(title, artist, ct);
+            lyrics = await ovh;
+        else
+            tier1.Cancel();
+
+        // Вторая очередь — Genius и NetEase, только когда первая ничего не нашла
         if (lyrics.Status is LyricsStatus.Error or LyricsStatus.NotFound)
         {
-            var genius = await FetchGeniusAsync(title, artist, ct);
-            if (genius.Status != LyricsStatus.Error || lyrics.Status == LyricsStatus.Error)
-                lyrics = genius;
+            var second = await FetchSecondTierAsync(title, artist, Math.Round(duration.TotalSeconds), DurationTolerance, ct);
+            if (second.Status != LyricsStatus.Error || lyrics.Status == LyricsStatus.Error)
+                lyrics = second;
         }
 
         if (lyrics.Status != LyricsStatus.Error)
@@ -317,25 +487,33 @@ public static class LyricsService
             if (VideoCache.TryGetValue(key, out var cached))
                 return cached;
 
-        // Точный запрос get на lrclib тут не помогает (длительность ролика не та) и медленный — только поиск
+        // Первая очередь: lrclib и резервная база сразу для всех прочтений.
+        // Точный запрос get на lrclib тут не помогает (длительность ролика не та) и медленный — только поиск.
+        using var tier1 = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var fallbacks = candidates.Select(c => FetchFallbackAsync(c.Title, c.Artist, tier1.Token)).ToArray();
         var searches = candidates.Select(c => SearchAsync(c.Title, c.Artist, ct)).ToArray();
         List<LrcLibTrack>?[] results;
         try { results = await Task.WhenAll(searches); }
         catch (Exception) { results = searches.Select(t => t.IsCompletedSuccessfully ? t.Result : null).ToArray(); }
 
         var result = PickVideo(results, seconds);
-        if (result == null)
+        if (result != null)
+            tier1.Cancel();
+        else
         {
-            // lrclib не знает ни одного прочтения — пробуем резервную базу, тоже сразу для всех
-            var fallbacks = candidates.Select(c => FetchFallbackAsync(c.Title, c.Artist, ct)).ToArray();
+            // lrclib не знает ни одного прочтения — берём текст из резервной базы
             var texts = await Task.WhenAll(fallbacks);
             int found = Array.FindIndex(texts, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
             if (found < 0)
             {
-                // И там нет — последняя попытка на Genius, тоже сразу для всех прочтений
-                var genius = await Task.WhenAll(candidates.Select(c => FetchGeniusAsync(c.Title, c.Artist, ct)));
-                found = Array.FindIndex(genius, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
-                texts = texts.Zip(genius, (ovh, g) => g.Status == LyricsStatus.Error ? ovh : g).ToArray();
+                // И там нет — вторая очередь (Genius и NetEase), тоже сразу для всех прочтений.
+                // Синхронный текст любого прочтения важнее обычного.
+                var second = await Task.WhenAll(candidates.Select(c =>
+                    FetchSecondTierAsync(c.Title, c.Artist, seconds, VideoDurationTolerance, ct)));
+                found = Array.FindIndex(second, l => l.Status == LyricsStatus.Synced);
+                if (found < 0)
+                    found = Array.FindIndex(second, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
+                texts = texts.Zip(second, (ovh, s) => s.Status == LyricsStatus.Error ? ovh : s).ToArray();
             }
             bool anyFailed = results.Any(r => r == null) && texts.All(l => l.Status != LyricsStatus.NotFound);
             result = found >= 0 ? (texts[found], found) : (anyFailed ? Lyrics.Error : Lyrics.NotFound, 0);

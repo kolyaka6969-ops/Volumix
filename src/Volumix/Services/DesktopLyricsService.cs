@@ -14,7 +14,10 @@ namespace Volumix.Services;
 /// </summary>
 public sealed class DesktopLyricsService : IDisposable
 {
-    /// <summary>Плеер присылает название раньше длительности, а без неё текст ищется хуже — ждём, пока всё придёт.</summary>
+    /// <summary>
+    /// Плеер присылает название раньше длительности, а без неё текст ищется хуже — ждём, пока всё придёт.
+    /// Сам трек на обоях появляется сразу, задерживается только поиск текста.
+    /// </summary>
     private static readonly TimeSpan FetchDelay = TimeSpan.FromMilliseconds(700);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(1);
 
@@ -62,7 +65,10 @@ public sealed class DesktopLyricsService : IDisposable
     {
         var track = _enabled ? _media.NowPlaying : null;
         // Обычное видео YouTube не должно висеть на обоях: пока текст не подтвердил, что это песня, прячем.
-        bool allowed = track != null && (track.Source != MusicSource.YouTube || track.Key == _music);
+        // Обложка у YouTube берётся только из каталога песен — если она нашлась, это песня, и текст можно
+        // не ждать: он подгрузится позже.
+        bool allowed = track != null &&
+                       (track.Source != MusicSource.YouTube || track.Key == _music || track.Cover != null);
         // Для подтверждённой песни из YouTube показываем разобранные название и исполнителя,
         // а не заголовок ролика с названием канала.
         var shown = allowed && _musicTrack != null && track!.Key == _music ? _musicTrack : track;

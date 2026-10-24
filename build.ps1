@@ -2,7 +2,7 @@
 # Нужны: .NET 8 SDK и Inno Setup 6 (winget install JRSoftware.InnoSetup)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$version = '1.4.8'
+$version = '1.4.9'
 
 # WPF в Release молча теряет ресурсы, если пути в obj длиннее 260 символов
 if ($root.Length -gt 140) {

@@ -427,23 +427,6 @@ public sealed class MediaSessionService : IDisposable
                 Cover = cover;
         }
 
-        // YouTube отдаёт в медиа-сеансе фавикон сайта, а на обоях нужна обложка трека — ищем её в каталогах.
-        // Так же с другими сайтами в браузере, если вместо обложки пришёл значок браузера,
-        // и с любым плеером, если обложка мелкая: Chrome ужимает её до 150×150, Spotify отдаёт 300×300,
-        // а на обоях она растягивается до 550 и больше.
-        if (title != null && (newTrack || sourceChanged || _catalogKey != key) &&
-            (_source == MusicSource.YouTube || (browser && Cover == null) || (Cover != null && PixelSize(Cover) < SharpCover)))
-        {
-            var variants = Candidates(title, artist).Take(4).ToList();
-            var art = await CoverArtService.FindAsync(variants);
-            if (_disposed || session != _session || version != _refreshVersion)
-                return;
-            _catalogKey = key;
-            // Не нашлось в каталогах — остаётся то, что прислал браузер
-            if (art != null || _source == MusicSource.YouTube)
-                Cover = art;
-        }
-
         if (playing != IsPlaying)
         {
             // Плеер не всегда сообщает позицию при паузе и продолжении — замираем и продолжаем от своей оценки
@@ -463,7 +446,28 @@ public sealed class MediaSessionService : IDisposable
         Album = album;
         if (session != null)
             ReadTimeline(session);
+        // Трек показываем сразу, не дожидаясь каталогов: обложка подменится, когда найдётся
         Changed?.Invoke();
+
+        // YouTube отдаёт в медиа-сеансе фавикон сайта, а на обоях нужна обложка трека — ищем её в каталогах.
+        // Так же с другими сайтами в браузере, если вместо обложки пришёл значок браузера,
+        // и с любым плеером, если обложка мелкая: Chrome ужимает её до 150×150, Spotify отдаёт 300×300,
+        // а на обоях она растягивается до 550 и больше.
+        if (title != null && (newTrack || sourceChanged || _catalogKey != key) &&
+            (_source == MusicSource.YouTube || (browser && Cover == null) || (Cover != null && PixelSize(Cover) < SharpCover)))
+        {
+            var variants = Candidates(title, artist).Take(4).ToList();
+            var art = await CoverArtService.FindAsync(variants);
+            if (_disposed || session != _session || version != _refreshVersion)
+                return;
+            _catalogKey = key;
+            // Не нашлось в каталогах — остаётся то, что прислал плеер
+            if (art != null || _source == MusicSource.YouTube)
+            {
+                Cover = art;
+                Changed?.Invoke();
+            }
+        }
     }
 
     /// <summary>
