@@ -66,6 +66,77 @@ internal static class NativeMethods
         style |= WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
     }
+
+    // ---------- Рабочий стол (слой обоев) ----------
+
+    public const int WS_CHILD = 0x40000000;
+    public const int WS_CLIPSIBLINGS = 0x04000000;
+    public const int WS_CLIPCHILDREN = 0x02000000;
+    public const int WS_EX_LAYERED = 0x80000;
+    public const int WS_EX_NOREDIRECTIONBITMAP = 0x200000;
+    public const uint LWA_ALPHA = 0x2;
+    public const uint SWP_NOSIZE = 0x1;
+    public const uint SWP_NOMOVE = 0x2;
+    public const uint SWP_NOACTIVATE = 0x10;
+    public const uint SWP_SHOWWINDOW = 0x40;
+    public const uint GW_HWNDNEXT = 2;
+    public const uint GW_CHILD = 5;
+    public const uint GA_PARENT = 1;
+    public const uint SMTO_NORMAL = 0;
+    public const uint SPI_SETDESKWALLPAPER = 0x14;
+    public const uint SPIF_UPDATEINIFILE = 0x1;
+    public const int DPI_HOSTING_BEHAVIOR_MIXED = 1;
+    public const int WM_STYLECHANGING = 0x007C;
+
+    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct STYLESTRUCT { public int StyleOld, StyleNew; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindow(string className, string? windowName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string className, string? windowName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint colorKey, byte alpha, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool SystemParametersInfo(uint action, uint param, string? value, uint winIni);
+
+    [DllImport("user32.dll")]
+    public static extern int SetThreadDpiHostingBehavior(int behavior);
 }
 
 /// <summary>Недокументированный, но стабильный с Vista интерфейс для смены устройства по умолчанию.</summary>

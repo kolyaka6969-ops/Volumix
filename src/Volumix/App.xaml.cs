@@ -24,6 +24,8 @@ public partial class App : Application
     private FlyoutWindow? _flyout;
     private OsdWindow? _osd;
     private VoiceController? _voice;
+    private SpotifyService? _spotify;
+    private DesktopLyricsService? _desktopLyrics;
 
     public static MixerViewModel Mixer { get; private set; } = null!;
     public static SettingsViewModel SettingsVm { get; private set; } = null!;
@@ -71,7 +73,15 @@ public partial class App : Application
         _hotkeys.Pressed += OnHotkey;
         SettingsVm = new SettingsViewModel(_hotkeys, Mixer);
         _voice = new VoiceController(this, Mixer, SettingsVm, () => _osd ??= new OsdWindow());
-        _tray = new TrayService(this, Mixer, SettingsVm);
+        _spotify = new SpotifyService(Dispatcher);
+        _tray = new TrayService(this, Mixer, SettingsVm, _spotify);
+        _desktopLyrics = new DesktopLyricsService(_spotify, Dispatcher) { Enabled = SettingsVm.DesktopLyrics };
+        SettingsVm.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(SettingsViewModel.DesktopLyrics))
+                _desktopLyrics.Enabled = SettingsVm.DesktopLyrics;
+        };
+        _spotify.Start();
 
         if (!e.Args.Contains(AutostartService.TrayArgument, StringComparer.OrdinalIgnoreCase))
             ShowMain(AppPage.Mixer);
@@ -188,7 +198,9 @@ public partial class App : Application
         if (IsExiting)
             return;
         IsExiting = true;
+        _desktopLyrics?.Dispose();
         _tray?.Dispose();
+        _spotify?.Dispose();
         _hotkeys?.Dispose();
         _voice?.Dispose();
         Mixer?.Dispose();
@@ -204,7 +216,7 @@ public partial class App : Application
         base.OnExit(e);
     }
 
-    private static void LogError(object error)
+    internal static void LogError(object error)
     {
         try
         {

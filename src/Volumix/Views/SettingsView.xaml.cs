@@ -22,9 +22,13 @@ public partial class SettingsView : UserControl
     private void TryVoice_Click(object sender, RoutedEventArgs e) =>
         ((App)Application.Current).ToggleVoice();
 
-    private void OpenSettingsFolder_Click(object sender, RoutedEventArgs e)
+    private void OpenSettingsFolder_Click(object sender, RoutedEventArgs e) => OpenFolder(SettingsService.Folder);
+
+    private void OpenLyricsFolder_Click(object sender, RoutedEventArgs e) => OpenFolder(LyricsService.Folder);
+
+    private static void OpenFolder(string folder)
     {
-        Directory.CreateDirectory(SettingsService.Folder);
-        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{SettingsService.Folder}\"") { UseShellExecute = true });
+        Directory.CreateDirectory(folder);
+        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
     }
 }

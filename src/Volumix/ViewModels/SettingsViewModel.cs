@@ -95,6 +95,12 @@ public sealed class SettingsViewModel : ObservableObject
         set { if (S.MediaButtons == value) return; S.MediaButtons = value; Save(); OnPropertyChanged(); }
     }
 
+    public bool DesktopLyrics
+    {
+        get => S.DesktopLyrics;
+        set { if (S.DesktopLyrics == value) return; S.DesktopLyrics = value; Save(); OnPropertyChanged(); }
+    }
+
     // ---------- Голосовое управление ----------
 
     public bool VoiceEnabled
