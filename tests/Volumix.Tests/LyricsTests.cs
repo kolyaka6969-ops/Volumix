@@ -119,6 +119,36 @@ public class LyricsTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"поиск занял {watch.Elapsed.TotalSeconds:N1} с");
     }
 
+    [Fact]
+    public void ParsesGeniusPage()
+    {
+        const string html = """
+            <div id="lyrics-root"><div data-lyrics-container="true" class="Lyrics__Container">
+            <div data-exclude-from-selection="true" class="LyricsHeader"><button><span>107 Contributors</span></button>
+            <div class="Dropdown"><span>Translations</span><div>English</div></div></div>
+            [Intro: Quavo]<br/>Yeah, <i>yeah</i><br><a href="/1"><span>One more ride, one more race</span></a><br/>
+            </div><div class="Ad"></div><div data-lyrics-container="true">[Chorus]<br/>Rock &amp; roll<br/></div></div>
+            """;
+        Assert.Equal("Yeah, yeah\nOne more ride, one more race\n\nRock & roll", LyricsService.ParseGeniusPage(html));
+        Assert.Null(LyricsService.ParseGeniusPage("<html>нет текста</html>"));
+    }
+
+    [SkippableFact]
+    public async Task FindsLyricsOnGenius()
+    {
+        var lyrics = await LyricsService.FetchGeniusAsync("Go Off", "Lil Uzi Vert", CancellationToken.None);
+        Skip.If(lyrics.Status == LyricsStatus.Error, "genius.com недоступен");
+
+        // Сохраняем, чтобы глазами проверить, что со страницы не попало лишнего
+        File.WriteAllLines(Path.Combine(Path.GetTempPath(), "volumix-genius.txt"), lyrics.Lines.Select(l => l.Text));
+        Assert.Equal(LyricsStatus.Plain, lyrics.Status);
+        Assert.Contains(lyrics.Lines, l => l.Text.Contains("one more ride", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(lyrics.Lines, l => l.Text.Contains("Contributors") || l.Text.StartsWith("["));
+        // Песня с таким же названием, но другого исполнителя — не наша
+        Assert.Equal(LyricsStatus.NotFound,
+            (await LyricsService.FetchGeniusAsync("Numb", "Ёлка", CancellationToken.None)).Status);
+    }
+
     /// <summary>Рисует обои вне экрана и сохраняет картинку в %TEMP%\volumix-desktop.png, чтобы на неё посмотреть.</summary>
     [Fact]
     public void RendersDesktopView()

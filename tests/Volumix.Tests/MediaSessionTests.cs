@@ -259,6 +259,40 @@ public class MediaSessionTests
         Assert.False(MediaSessionService.IsAppIcon(new byte[] { 1, 2, 3 }));
     }
 
+    /// <summary>Spotify отдаёт обложку 300×300 — в каталоге должна найтись та же, но крупнее, а не караоке-версия.</summary>
+    [SkippableFact]
+    public async Task FindsSharpCoverForSpotifyTrack()
+    {
+        var (title, artist, _) = MediaSessionService.CleanMetadata(
+            "Go Off (with Lil Uzi Vert, Quavo & Travis Scott)", "Lil Uzi Vert", "The Fate of the Furious: The Album", MusicSource.Spotify);
+        var art = await CoverArtService.FindAsync(MediaSessionService.Candidates(title, artist).Take(4).ToList());
+        Skip.If(art == null && !await Reachable("https://api.deezer.com/"), "Deezer недоступен");
+
+        Assert.NotNull(art);
+        Assert.True(MediaSessionService.PixelSize(art) >= 600, $"обложка {MediaSessionService.PixelSize(art)} пикселей");
+    }
+
+    private static async Task<bool> Reachable(string url)
+    {
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            await http.GetAsync(url);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    [Fact]
+    public void MeasuresCoverSize()
+    {
+        Assert.Equal(64, MediaSessionService.PixelSize(Png(System.Drawing.Color.DarkRed)));
+        Assert.Equal(0, MediaSessionService.PixelSize(new byte[] { 1, 2, 3 }));
+    }
+
     private static byte[] Png(System.Drawing.Color background)
     {
         using var bmp = new System.Drawing.Bitmap(64, 64, System.Drawing.Imaging.PixelFormat.Format32bppArgb);

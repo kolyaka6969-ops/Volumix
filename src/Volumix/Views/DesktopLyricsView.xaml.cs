@@ -127,7 +127,7 @@ public partial class DesktopLyricsView : UserControl
     private sealed class Marquee
     {
         /// <summary>Скорость в точках макета 1920×1080.</summary>
-        private const double Speed = 45;
+        private const double Speed = 22;
         private static readonly TimeSpan StartPause = TimeSpan.FromSeconds(2.5);
         private static readonly TimeSpan EndPause = TimeSpan.FromSeconds(1.5);
 

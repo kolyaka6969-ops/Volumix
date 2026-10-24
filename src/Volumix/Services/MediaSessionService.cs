@@ -428,16 +428,20 @@ public sealed class MediaSessionService : IDisposable
         }
 
         // YouTube отдаёт в медиа-сеансе фавикон сайта, а на обоях нужна обложка трека — ищем её в каталогах.
-        // Так же и с другими сайтами в браузере, если вместо обложки пришёл значок браузера.
-        if ((_source == MusicSource.YouTube || (browser && Cover == null)) && title != null &&
-            (newTrack || sourceChanged || _catalogKey != key))
+        // Так же с другими сайтами в браузере, если вместо обложки пришёл значок браузера,
+        // и с любым плеером, если обложка мелкая: Chrome ужимает её до 150×150, Spotify отдаёт 300×300,
+        // а на обоях она растягивается до 550 и больше.
+        if (title != null && (newTrack || sourceChanged || _catalogKey != key) &&
+            (_source == MusicSource.YouTube || (browser && Cover == null) || (Cover != null && PixelSize(Cover) < SharpCover)))
         {
             var variants = Candidates(title, artist).Take(4).ToList();
             var art = await CoverArtService.FindAsync(variants);
             if (_disposed || session != _session || version != _refreshVersion)
                 return;
             _catalogKey = key;
-            Cover = art;
+            // Не нашлось в каталогах — остаётся то, что прислал браузер
+            if (art != null || _source == MusicSource.YouTube)
+                Cover = art;
         }
 
         if (playing != IsPlaying)
@@ -718,6 +722,26 @@ public sealed class MediaSessionService : IDisposable
         catch (Exception)
         {
             return false;
+        }
+    }
+
+    /// <summary>Обложка меньше этого размера на обоях выглядит мыльной.</summary>
+    private const int SharpCover = 400;
+
+    /// <summary>Меньшая сторона картинки в пикселях; 0, если её не прочитать. Читается только заголовок файла.</summary>
+    internal static int PixelSize(byte[] data)
+    {
+        try
+        {
+            using var ms = new MemoryStream(data);
+            var frame = System.Windows.Media.Imaging.BitmapDecoder.Create(ms,
+                System.Windows.Media.Imaging.BitmapCreateOptions.DelayCreation,
+                System.Windows.Media.Imaging.BitmapCacheOption.None).Frames[0];
+            return Math.Min(frame.PixelWidth, frame.PixelHeight);
+        }
+        catch (Exception)
+        {
+            return 0;
         }
     }
 

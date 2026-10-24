@@ -125,6 +125,140 @@ public static class LyricsService
         }
     }
 
+    /// <summary>
+    /// Последняя попытка — Genius: текстов там больше всего, но тоже без меток времени. Ключ не нужен:
+    /// поиск идёт через тот же API, что и у их сайта, а текст берётся со страницы песни.
+    /// Берём только песню с тем же названием и исполнителем, иначе на обои попадёт чужой текст.
+    /// </summary>
+    internal static async Task<Lyrics> FetchGeniusAsync(string title, string? artist, CancellationToken ct)
+    {
+        try
+        {
+            var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{FirstArtist(artist)} {title}");
+            var json = await Fallback.GetStringAsync($"https://genius.com/api/search/song?q={query}&per_page=5", ct);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("response", out var response) ||
+                !response.TryGetProperty("sections", out var sections) || sections.GetArrayLength() == 0 ||
+                !sections[0].TryGetProperty("hits", out var hits))
+                return Lyrics.NotFound;
+
+            int best = 0;
+            JsonElement? song = null;
+            foreach (var hit in hits.EnumerateArray())
+            {
+                if (!hit.TryGetProperty("result", out var result))
+                    continue;
+                var foundArtist = Str(result, "artist_names") ??
+                                  (result.TryGetProperty("primary_artist", out var pa) ? Str(pa, "name") : null);
+                int score = CoverArtService.Score(title, artist, Str(result, "title"), foundArtist);
+                if (score > best)
+                    (best, song) = (score, result);
+            }
+            // Совпало только название — у известных названий («Numb», «Home») это почти всегда другая песня
+            if (song is not { } s || best < (string.IsNullOrWhiteSpace(artist) ? 3 : 4))
+                return Lyrics.NotFound;
+            if (s.TryGetProperty("instrumental", out var instrumental) && instrumental.ValueKind == JsonValueKind.True)
+                return Lyrics.Instrumental;
+            if (Str(s, "url") is not { } url || !url.StartsWith("https://genius.com/", StringComparison.Ordinal))
+                return Lyrics.NotFound;
+
+            var text = ParseGeniusPage(await Fallback.GetStringAsync(url, ct));
+            return text == null ? Lyrics.NotFound : Lyrics.FromPlain(text);
+        }
+        catch (Exception)
+        {
+            return Lyrics.Error; // нет сети, таймаут, отмена, страница поменялась
+        }
+    }
+
+    /// <summary>
+    /// Текст со страницы Genius: блоки data-lyrics-container без служебных вставок (data-exclude-from-selection),
+    /// &lt;br&gt; — перевод строки, заголовки частей «[Chorus: …]» — пустая строка между куплетами.
+    /// </summary>
+    internal static string? ParseGeniusPage(string html)
+    {
+        var parts = new List<string>();
+        int at = 0;
+        while ((at = html.IndexOf("data-lyrics-container=\"true\"", at, StringComparison.Ordinal)) >= 0)
+        {
+            int start = html.IndexOf('>', at) + 1;
+            if (start == 0)
+                break;
+            int end = ElementEnd(html, start, "div");
+            parts.Add(RemoveExcluded(html[start..end]));
+            at = end;
+        }
+        if (parts.Count == 0)
+            return null;
+
+        // Переводы строк в самом HTML — просто пробелы, строки задают только <br>
+        var html2 = string.Join("<br>", parts).Replace("\r", "").Replace('\n', ' ');
+        var text = System.Net.WebUtility.HtmlDecode(HtmlTag.Replace(HtmlBreak.Replace(html2, "\n"), ""));
+        var lines = new List<string>();
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = Regex.Replace(raw, @"\s{2,}", " ").Trim();
+            if (SectionHeader.IsMatch(line))
+                line = "";
+            // Между куплетами одна пустая строка
+            if (line.Length > 0 || (lines.Count > 0 && lines[^1].Length > 0))
+                lines.Add(line);
+        }
+        var result = string.Join("\n", lines).Trim();
+        return result.Length > 0 ? result : null;
+    }
+
+    private static readonly Regex HtmlBreak = new(@"<br\s*/?>", RegexOptions.IgnoreCase);
+    private static readonly Regex HtmlTag = new(@"<[^>]*>");
+    private static readonly Regex SectionHeader = new(@"^\[[^\]]*\]$");
+
+    /// <summary>Индекс закрывающего тега элемента, содержимое которого начинается с <paramref name="start"/>.</summary>
+    private static int ElementEnd(string html, int start, string tag)
+    {
+        int depth = 1, i = start;
+        while (true)
+        {
+            int open = html.IndexOf("<" + tag, i, StringComparison.OrdinalIgnoreCase);
+            int close = html.IndexOf("</" + tag, i, StringComparison.OrdinalIgnoreCase);
+            if (close < 0)
+                return html.Length;
+            if (open >= 0 && open < close)
+            {
+                depth++;
+                i = open + tag.Length + 1;
+            }
+            else
+            {
+                if (--depth == 0)
+                    return close;
+                i = close + tag.Length + 2;
+            }
+        }
+    }
+
+    /// <summary>Вырезает элементы с data-exclude-from-selection: «107 Contributors», переводы, «Read More».</summary>
+    private static string RemoveExcluded(string html)
+    {
+        const string marker = "data-exclude-from-selection=\"true\"";
+        int at;
+        while ((at = html.IndexOf(marker, StringComparison.Ordinal)) >= 0)
+        {
+            int tagStart = html.LastIndexOf('<', at);
+            int nameEnd = html.IndexOfAny(new[] { ' ', '>' }, tagStart + 1);
+            int contentStart = html.IndexOf('>', at) + 1;
+            if (tagStart < 0 || nameEnd < 0 || contentStart == 0)
+                break;
+            var tag = html[(tagStart + 1)..nameEnd];
+            int close = ElementEnd(html, contentStart, tag);
+            int after = html.IndexOf('>', close);
+            html = html[..tagStart] + (after < 0 ? "" : html[(after + 1)..]);
+        }
+        return html;
+    }
+
+    private static string? Str(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
     /// <summary>Никогда не бросает исключений: при сбое сети вернёт <see cref="Lyrics.Error"/>.</summary>
     public static async Task<Lyrics> FindAsync(string title, string? artist, string? album, TimeSpan duration, CancellationToken ct)
     {
@@ -145,6 +279,12 @@ public static class LyricsService
         // текст из резервной базы, чтобы песня всё равно попала на обои.
         if (lyrics.Status is LyricsStatus.Error or LyricsStatus.NotFound)
             lyrics = await FetchFallbackAsync(title, artist, ct);
+        if (lyrics.Status is LyricsStatus.Error or LyricsStatus.NotFound)
+        {
+            var genius = await FetchGeniusAsync(title, artist, ct);
+            if (genius.Status != LyricsStatus.Error || lyrics.Status == LyricsStatus.Error)
+                lyrics = genius;
+        }
 
         if (lyrics.Status != LyricsStatus.Error)
             lock (Cache)
@@ -190,6 +330,13 @@ public static class LyricsService
             var fallbacks = candidates.Select(c => FetchFallbackAsync(c.Title, c.Artist, ct)).ToArray();
             var texts = await Task.WhenAll(fallbacks);
             int found = Array.FindIndex(texts, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
+            if (found < 0)
+            {
+                // И там нет — последняя попытка на Genius, тоже сразу для всех прочтений
+                var genius = await Task.WhenAll(candidates.Select(c => FetchGeniusAsync(c.Title, c.Artist, ct)));
+                found = Array.FindIndex(genius, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
+                texts = texts.Zip(genius, (ovh, g) => g.Status == LyricsStatus.Error ? ovh : g).ToArray();
+            }
             bool anyFailed = results.Any(r => r == null) && texts.All(l => l.Status != LyricsStatus.NotFound);
             result = found >= 0 ? (texts[found], found) : (anyFailed ? Lyrics.Error : Lyrics.NotFound, 0);
         }
