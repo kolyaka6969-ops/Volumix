@@ -30,6 +30,8 @@ public sealed class AppSettings
     public bool ShowOsd { get; set; } = true;
     public bool CloseToTray { get; set; } = true;
     public bool VoiceEnabled { get; set; } = true;
+    /// <summary>Кнопки Spotify (назад / пауза / вперёд) значками в трее.</summary>
+    public bool MediaButtons { get; set; } = true;
     /// <summary>Версия формата настроек, для добавления новых значений по умолчанию старым пользователям.</summary>
     public int Version { get; set; }
 

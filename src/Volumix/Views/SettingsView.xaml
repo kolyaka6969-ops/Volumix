@@ -44,6 +44,22 @@
             </Grid>
         </Border>
 
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE768;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Кнопки Spotify в трее" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Назад, пауза и вперёд рядом с часами, пока открыт Spotify" />
+                </StackPanel>
+                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding MediaButtons}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
         <TextBlock Style="{StaticResource SectionHeader}" Text="Громкость" />
 
         <Border Style="{StaticResource Card}">

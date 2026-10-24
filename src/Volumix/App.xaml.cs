@@ -71,7 +71,7 @@ public partial class App : Application
         _hotkeys.Pressed += OnHotkey;
         SettingsVm = new SettingsViewModel(_hotkeys, Mixer);
         _voice = new VoiceController(this, Mixer, SettingsVm, () => _osd ??= new OsdWindow());
-        _tray = new TrayService(this, Mixer);
+        _tray = new TrayService(this, Mixer, SettingsVm);
 
         if (!e.Args.Contains(AutostartService.TrayArgument, StringComparer.OrdinalIgnoreCase))
             ShowMain(AppPage.Mixer);
