@@ -22,7 +22,7 @@ public sealed record Lyrics(LyricsStatus Status, IReadOnlyList<LyricLine> Lines)
     public static readonly Lyrics Error = new(LyricsStatus.Error, Array.Empty<LyricLine>());
     public static readonly Lyrics Instrumental = new(LyricsStatus.Instrumental, Array.Empty<LyricLine>());
 
-    private static readonly Regex SentenceStart = new(@"(?<=\p{Ll}[,!?…]?)\s+(?=\p{Lu})", RegexOptions.Compiled);
+    private static readonly Regex SentenceStart = new(@"(?<=\p{Ll}[,!?…]?)\s+(?=\p{Lu})");
 
     /// <summary>Синхронный текст из LRC; без меток времени — просто текст.</summary>
     public static Lyrics FromLrc(string lrc)
@@ -57,19 +57,23 @@ public static class LyricsService
 
     /// <summary>Допуск по длительности: у альбомной версии и сингла она часто расходится на секунду-две.</summary>
     private const double DurationTolerance = 3;
+    /// <summary>У клипа на YouTube вступление или титры: длительность ролика расходится с треком на секунды.</summary>
+    internal const double VideoDurationTolerance = 12;
     private const int CacheLimit = 200;
 
     private static readonly HttpClient Http = CreateClient();
+    private static readonly HttpClient Fallback = CreateFallback();
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly Dictionary<string, Lyrics> Cache = new();
+    private static readonly Dictionary<string, (Lyrics Lyrics, int Index)> VideoCache = new();
 
-    private static readonly Regex TimeTag = new(@"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]", RegexOptions.Compiled);
-    private static readonly Regex LeadingTimeTags = new(@"^(?:\s*\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+", RegexOptions.Compiled);
-    private static readonly Regex OffsetTag = new(@"^\[offset:\s*([+-]?\d+)\s*\]$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex AnyTag = new(@"^\[[a-z#]+:.*\]$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex WordTimeTag = new(@"<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>", RegexOptions.Compiled);
-    private static readonly Regex TitleSuffix = new(@"\s+-\s+.*$|\s*[(\[](?:feat|ft|with|prod)\.?\s[^)\]]*[)\]]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex ArtistSeparator = new(@",\s*|\s+&\s+|\s+(?:feat|ft)\.?\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex TimeTag = new(@"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]");
+    private static readonly Regex LeadingTimeTags = new(@"^(?:\s*\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+");
+    private static readonly Regex OffsetTag = new(@"^\[offset:\s*([+-]?\d+)\s*\]$", RegexOptions.IgnoreCase);
+    private static readonly Regex AnyTag = new(@"^\[[a-z#]+:.*\]$", RegexOptions.IgnoreCase);
+    private static readonly Regex WordTimeTag = new(@"<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>");
+    private static readonly Regex TitleSuffix = new(@"\s+-\s+.*$|\s*[(\[](?:feat|ft|with|prod)\.?\s[^)\]]*[)\]]", RegexOptions.IgnoreCase);
+    private static readonly Regex ArtistSeparator = new(@",\s*|\s+&\s+|\s+(?:feat|ft)\.?\s+", RegexOptions.IgnoreCase);
 
     private static HttpClient CreateClient()
     {
@@ -78,6 +82,47 @@ public static class LyricsService
         var version = typeof(LyricsService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"Volumix/{version} (+https://github.com/kolyaka6969-ops/Volumix)");
         return http;
+    }
+
+    private static HttpClient CreateFallback()
+    {
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        var version = typeof(LyricsService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+        http.DefaultRequestHeaders.UserAgent.ParseAdd($"Volumix/{version}");
+        return http;
+    }
+
+    /// <summary>
+    /// Резервная база без ключа и регистрации: отдаёт обычный текст, когда lrclib недоступен.
+    /// Синхронных меток там нет, поэтому строки просто подсвечиваются по порядку.
+    /// </summary>
+    private static async Task<Lyrics> FetchFallbackAsync(string title, string? artist, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(artist))
+            return Lyrics.Error;
+        try
+        {
+            var url = $"https://api.lyrics.ovh/v1/{Uri.EscapeDataString(FirstArtist(artist))}/{Uri.EscapeDataString(title)}";
+            using var response = await Fallback.GetAsync(url, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return Lyrics.NotFound;
+            if (!response.IsSuccessStatusCode)
+                return Lyrics.Error;
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("lyrics", out var text) || text.ValueKind != JsonValueKind.String)
+                return Lyrics.NotFound;
+            var raw = text.GetString() ?? "";
+            // Французская подпись сервиса: «Paroles de la chanson … par …»
+            var lines = raw.Replace("\r", "").Split('\n')
+                .Where(line => !line.TrimStart().StartsWith("Paroles de la chanson", StringComparison.OrdinalIgnoreCase));
+            var lyrics = Lyrics.FromPlain(string.Join("\n", lines));
+            return lyrics.Status == LyricsStatus.NotFound ? Lyrics.NotFound : lyrics;
+        }
+        catch (Exception)
+        {
+            return Lyrics.Error;
+        }
     }
 
     /// <summary>Никогда не бросает исключений: при сбое сети вернёт <see cref="Lyrics.Error"/>.</summary>
@@ -96,6 +141,11 @@ public static class LyricsService
         try { lyrics = await FetchAsync(title, artist, album, duration, ct); }
         catch (Exception) { lyrics = Lyrics.Error; } // нет сети, таймаут, отмена, кривой ответ
 
+        // lrclib иногда отвечает 5xx или не знает редкую песню — тогда берём обычный (несинхронный)
+        // текст из резервной базы, чтобы песня всё равно попала на обои.
+        if (lyrics.Status is LyricsStatus.Error or LyricsStatus.NotFound)
+            lyrics = await FetchFallbackAsync(title, artist, ct);
+
         if (lyrics.Status != LyricsStatus.Error)
             lock (Cache)
             {
@@ -104,6 +154,93 @@ public static class LyricsService
                 Cache[key] = lyrics;
             }
         return lyrics;
+    }
+
+    /// <summary>
+    /// Текст для ролика YouTube. Название ролика редко совпадает с названием песни, поэтому прочтений несколько
+    /// (<paramref name="candidates"/>, самое вероятное первым). Все они ищутся на lrclib одновременно, синхронный
+    /// текст любого прочтения важнее обычного текста, а резервная база без меток времени — только если lrclib
+    /// не нашёл ничего. Возвращает текст и номер прочтения, по которому он нашёлся. Никогда не бросает исключений.
+    /// </summary>
+    public static async Task<(Lyrics Lyrics, int Index)> FindVideoAsync(
+        IReadOnlyList<(string Title, string? Artist)> candidates, TimeSpan duration, CancellationToken ct)
+    {
+        for (int i = 0; i < candidates.Count; i++)
+            if (FindLocal(candidates[i].Title, candidates[i].Artist) is { } local)
+                return (local, i);
+        if (candidates.Count == 0)
+            return (Lyrics.NotFound, 0);
+
+        double seconds = Math.Round(duration.TotalSeconds);
+        var key = $"{(int)seconds}\n" + string.Join("\n", candidates.Select(c => $"{c.Artist}\t{c.Title}"));
+        lock (VideoCache)
+            if (VideoCache.TryGetValue(key, out var cached))
+                return cached;
+
+        // Точный запрос get на lrclib тут не помогает (длительность ролика не та) и медленный — только поиск
+        var searches = candidates.Select(c => SearchAsync(c.Title, c.Artist, ct)).ToArray();
+        List<LrcLibTrack>?[] results;
+        try { results = await Task.WhenAll(searches); }
+        catch (Exception) { results = searches.Select(t => t.IsCompletedSuccessfully ? t.Result : null).ToArray(); }
+
+        var result = PickVideo(results, seconds);
+        if (result == null)
+        {
+            // lrclib не знает ни одного прочтения — пробуем резервную базу, тоже сразу для всех
+            var fallbacks = candidates.Select(c => FetchFallbackAsync(c.Title, c.Artist, ct)).ToArray();
+            var texts = await Task.WhenAll(fallbacks);
+            int found = Array.FindIndex(texts, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
+            bool anyFailed = results.Any(r => r == null) && texts.All(l => l.Status != LyricsStatus.NotFound);
+            result = found >= 0 ? (texts[found], found) : (anyFailed ? Lyrics.Error : Lyrics.NotFound, 0);
+        }
+
+        if (result.Value.Lyrics.Status != LyricsStatus.Error)
+            lock (VideoCache)
+            {
+                if (VideoCache.Count >= CacheLimit)
+                    VideoCache.Clear();
+                VideoCache[key] = result.Value;
+            }
+        return result.Value;
+    }
+
+    /// <summary>
+    /// Выбор между прочтениями ролика: сначала синхронный текст с подходящей длительностью (в порядке прочтений),
+    /// потом обычный с подходящей длительностью, потом любой найденный текст без меток времени.
+    /// </summary>
+    internal static (Lyrics Lyrics, int Index)? PickVideo(IReadOnlyList<List<LrcLibTrack>?> results, double seconds)
+    {
+        var picked = results.Select(r => r == null ? null : Pick(r, seconds, VideoDurationTolerance)).ToList();
+        int synced = picked.FindIndex(l => l?.Status == LyricsStatus.Synced);
+        if (synced >= 0)
+            return (picked[synced]!, synced);
+        int any = picked.FindIndex(l => l != null);
+        if (any >= 0)
+            return (picked[any]!, any);
+        // Длительность не совпала ни у кого (длинный клип, live) — синхронизация не сойдётся, но сам текст верный
+        for (int i = 0; i < results.Count; i++)
+        {
+            var plain = results[i]?.Select(ToLyrics).FirstOrDefault(l => l != null);
+            if (plain != null)
+                return (plain.Status == LyricsStatus.Synced ? Lyrics.FromPlain(string.Join("\n", plain.Lines.Select(l => l.Text))) : plain, i);
+        }
+        return null;
+    }
+
+    private static async Task<List<LrcLibTrack>?> SearchAsync(string title, string? artist, CancellationToken ct)
+    {
+        try
+        {
+            var query = artist == null ? Query(("track_name", title)) : Query(("track_name", title), ("artist_name", artist));
+            using var response = await Http.GetAsync("search?" + query, ct);
+            if (!response.IsSuccessStatusCode)
+                return null;
+            return JsonSerializer.Deserialize<List<LrcLibTrack>>(await response.Content.ReadAsStringAsync(ct), Json) ?? new();
+        }
+        catch (Exception)
+        {
+            return null; // нет сети, таймаут, отмена
+        }
     }
 
     /// <summary>Свой файл можно положить для песен, которых нет на lrclib, или чтобы поправить чужой.</summary>
@@ -175,7 +312,7 @@ public static class LyricsService
                 continue;
             }
             var found = JsonSerializer.Deserialize<List<LrcLibTrack>>(await response.Content.ReadAsStringAsync(ct), Json);
-            var lyrics = found == null ? null : Pick(found, seconds);
+            var lyrics = found == null ? null : Pick(found, seconds, DurationTolerance);
             if (lyrics?.Status == LyricsStatus.Synced)
                 return lyrics;
             best ??= lyrics;
@@ -184,8 +321,8 @@ public static class LyricsService
     }
 
     /// <summary>Лучший из найденных: подходящий по длительности, синхронный, потом просто текст.</summary>
-    private static Lyrics? Pick(List<LrcLibTrack> found, double seconds) =>
-        found.Where(t => seconds <= 0 || Math.Abs(t.Duration - seconds) <= DurationTolerance)
+    private static Lyrics? Pick(List<LrcLibTrack> found, double seconds, double tolerance) =>
+        found.Where(t => seconds <= 0 || Math.Abs(t.Duration - seconds) <= tolerance)
             .Select(t => (Track: t, Lyrics: ToLyrics(t)))
             .Where(x => x.Lyrics != null)
             .OrderBy(x => x.Lyrics!.Status switch { LyricsStatus.Synced => 0, LyricsStatus.Plain => 1, _ => 2 })
@@ -264,7 +401,7 @@ public static class LyricsService
         return clean;
     }
 
-    private sealed class LrcLibTrack
+    internal sealed class LrcLibTrack
     {
         public double Duration { get; set; }
         public bool Instrumental { get; set; }

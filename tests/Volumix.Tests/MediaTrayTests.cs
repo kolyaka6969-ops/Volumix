@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Threading;
 using Volumix.Services;
@@ -53,7 +53,7 @@ public class MediaTrayTests
         var found = new TaskCompletionSource<(bool, string?)>();
         var thread = new Thread(() =>
         {
-            var spotify = new SpotifyService(Dispatcher.CurrentDispatcher);
+            var spotify = new MediaSessionService(Dispatcher.CurrentDispatcher);
             spotify.Changed += () =>
             {
                 if (spotify.IsAvailable)

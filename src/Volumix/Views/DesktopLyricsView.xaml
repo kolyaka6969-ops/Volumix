@@ -79,10 +79,21 @@
                         </Border>
                     </Grid>
 
-                    <TextBlock x:Name="TitleText" Margin="0,40,0,0" FontSize="46" FontWeight="Bold" LineHeight="54"
-                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="108" />
-                    <TextBlock x:Name="ArtistText" Margin="0,8,0,0" FontSize="28" FontWeight="SemiBold" Opacity="0.78"
-                               TextTrimming="CharacterEllipsis" />
+                    <!-- Длинные название и исполнитель не обрезаются, а уезжают влево, как в Spotify (см. Marquee) -->
+                    <Canvas Margin="0,40,0,0" Width="440" Height="58" HorizontalAlignment="Left" ClipToBounds="True">
+                        <TextBlock x:Name="TitleText" FontSize="46" FontWeight="Bold" LineHeight="54" TextWrapping="NoWrap">
+                            <TextBlock.RenderTransform>
+                                <TranslateTransform x:Name="TitleShift" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
+                    </Canvas>
+                    <Canvas Margin="0,8,0,0" Width="440" Height="38" HorizontalAlignment="Left" ClipToBounds="True" Opacity="0.78">
+                        <TextBlock x:Name="ArtistText" FontSize="28" FontWeight="SemiBold" TextWrapping="NoWrap">
+                            <TextBlock.RenderTransform>
+                                <TranslateTransform x:Name="ArtistShift" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
+                    </Canvas>
                     <TextBlock x:Name="AlbumText" Margin="0,4,0,0" FontSize="22" Opacity="0.5" TextTrimming="CharacterEllipsis" />
 
                     <Grid Margin="0,34,0,0" Width="440" HorizontalAlignment="Left">

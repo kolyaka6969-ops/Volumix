@@ -17,15 +17,15 @@ public sealed class TrayService : IDisposable
     private readonly MixerViewModel _mixer;
     private readonly SettingsViewModel _settings;
     private readonly App _app;
-    private readonly SpotifyService _spotify;
+    private readonly MediaSessionService _player;
     private readonly MediaTrayIcons _media;
 
-    public TrayService(App app, MixerViewModel mixer, SettingsViewModel settings, SpotifyService spotify)
+    public TrayService(App app, MixerViewModel mixer, SettingsViewModel settings, MediaSessionService player)
     {
         _app = app;
         _mixer = mixer;
         _settings = settings;
-        _spotify = spotify;
+        _player = player;
 
         using var stream = Application.GetResourceStream(new Uri("pack://application:,,,/Assets/app.ico")).Stream;
         _icon = new Forms.NotifyIcon
@@ -44,7 +44,7 @@ public sealed class TrayService : IDisposable
         UpdateTooltip();
 
         // Значки плеера создаются сразу после основного, чтобы их номера в трее не менялись от запуска к запуску
-        _media = new MediaTrayIcons(_spotify, app.Dispatcher, ShowMenu) { Enabled = _settings.MediaButtons };
+        _media = new MediaTrayIcons(_player, app.Dispatcher, ShowMenu) { Enabled = _settings.MediaButtons };
         _settings.PropertyChanged += OnSettingsChanged;
     }
 
@@ -90,11 +90,9 @@ public sealed class TrayService : IDisposable
         devices.IsEnabled = _mixer.Devices.Count > 0;
         menu.Items.Add(devices);
 
-        if (SettingsService.Current.VoiceEnabled)
-            menu.Items.Add(Item("Голосовая команда", _app.ToggleVoice));
         menu.Items.Add(new MenuItem
         {
-            Header = "Кнопки Spotify в трее",
+            Header = "Кнопки плеера в трее",
             IsCheckable = true,
             IsChecked = _settings.MediaButtons,
         }.Also(mi => mi.Click += (_, _) => _settings.MediaButtons = mi.IsChecked));

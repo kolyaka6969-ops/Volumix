@@ -1,8 +1,8 @@
-﻿; Установщик Volumix (Inno Setup 6). Собирается скриптом build.ps1 в корне.
+; Установщик Volumix (Inno Setup 6). Собирается скриптом build.ps1 в корне.
 
 #define AppName "Volumix"
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #define AppVersion "1.4.6"
 #endif
 #define AppExe "Volumix.exe"
 #define PublishDir "..\publish"
@@ -47,6 +47,10 @@ english.RemoveSettings=Also remove Volumix settings (hotkeys, theme)?
 [Tasks]
 Name: "autostart"; Description: "{cm:AutostartTask}"; GroupDescription: "{cm:ExtraGroup}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[InstallDelete]
+; Голосовые команды убраны — модель распознавания речи (~90 МБ) от прежних версий больше не нужна
+Type: filesandordirs; Name: "{app}\models"
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

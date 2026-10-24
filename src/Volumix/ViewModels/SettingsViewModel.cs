@@ -38,6 +38,14 @@ public sealed class SettingsViewModel : ObservableObject
         new Option<ThemeMode>(ThemeMode.Dark, "Тёмная"),
     };
 
+    public static IReadOnlyList<Option<MusicSourceMode>> Sources { get; } = new[]
+    {
+        new Option<MusicSourceMode>(MusicSourceMode.Auto, "Spotify, Яндекс Музыка и YouTube"),
+        new Option<MusicSourceMode>(MusicSourceMode.Spotify, "Только Spotify"),
+        new Option<MusicSourceMode>(MusicSourceMode.YandexMusic, "Яндекс Музыка (и браузер)"),
+        new Option<MusicSourceMode>(MusicSourceMode.YouTube, "YouTube (и браузер)"),
+    };
+
     public string Version => "Версия " + (Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0");
 
     public bool Autostart
@@ -101,28 +109,10 @@ public sealed class SettingsViewModel : ObservableObject
         set { if (S.DesktopLyrics == value) return; S.DesktopLyrics = value; Save(); OnPropertyChanged(); }
     }
 
-    // ---------- Голосовое управление ----------
-
-    public bool VoiceEnabled
+    public MusicSourceMode Source
     {
-        get => S.VoiceEnabled;
-        set { if (S.VoiceEnabled == value) return; S.VoiceEnabled = value; Save(); OnPropertyChanged(); }
-    }
-
-    public string VoiceHotkeyText =>
-        S.Hotkeys.FirstOrDefault(h => h.Action == HotkeyAction.VoiceCommand && h.Key != Key.None) is { } h
-            ? HotkeyService.Format(h.Modifiers, h.Key)
-            : "не назначено";
-
-    public string VoiceStatus =>
-        VoiceService.FindModel() == null ? "Модель распознавания не найдена — переустановите Volumix"
-        : !VoiceService.HasMicrophone ? "Микрофон не найден"
-        : $"Нажмите {VoiceHotkeyText} или кнопку микрофона и скажите команду. Работает без интернета.";
-
-    public void RefreshVoiceStatus()
-    {
-        OnPropertyChanged(nameof(VoiceStatus));
-        OnPropertyChanged(nameof(VoiceHotkeyText));
+        get => S.Source;
+        set { if (S.Source == value) return; S.Source = value; Save(); OnPropertyChanged(); }
     }
 
     // ---------- Горячие клавиши ----------
@@ -190,7 +180,6 @@ public sealed class HotkeyBindingViewModel : ObservableObject
         new Option<HotkeyAction>(HotkeyAction.ToggleMute, "Вкл/выкл звук"),
         new Option<HotkeyAction>(HotkeyAction.OpenMixer, "Открыть микшер"),
         new Option<HotkeyAction>(HotkeyAction.NextDevice, "Следующее устройство вывода"),
-        new Option<HotkeyAction>(HotkeyAction.VoiceCommand, "Голосовая команда"),
     };
 
     public static IReadOnlyList<Option<HotkeyTarget>> Targets { get; } = new[]
@@ -211,7 +200,6 @@ public sealed class HotkeyBindingViewModel : ObservableObject
             OnPropertyChanged(nameof(HasTarget));
             OnPropertyChanged(nameof(HasApp));
             SettingsViewModel.Save();
-            _owner.RefreshVoiceStatus();
         }
     }
 
@@ -262,7 +250,6 @@ public sealed class HotkeyBindingViewModel : ObservableObject
         Model.Key = key;
         OnPropertyChanged(nameof(GestureText));
         SettingsViewModel.Save();
-        _owner.RefreshVoiceStatus();
     }
 
     public void BeginCapture() => _owner.SuspendHotkeys();

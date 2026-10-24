@@ -112,6 +112,19 @@ internal static class NativeMethods
     public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    public static string GetWindowTitle(IntPtr hWnd)
+    {
+        var sb = new StringBuilder(512);
+        int length = GetWindowText(hWnd, sb, sb.Capacity);
+        return length <= 0 ? string.Empty : sb.ToString(0, length);
+    }
+
+    [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
 
     [DllImport("user32.dll")]

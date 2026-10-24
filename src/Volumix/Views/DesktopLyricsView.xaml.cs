@@ -29,10 +29,14 @@ public partial class DesktopLyricsView : UserControl
     private Lyrics _lyrics = Lyrics.Loading;
     private int _current = int.MinValue;
     private bool _jump;
+    private readonly Marquee _titleMarquee;
+    private readonly Marquee _artistMarquee;
 
     public DesktopLyricsView()
     {
         InitializeComponent();
+        _titleMarquee = new Marquee(TitleText, TitleShift);
+        _artistMarquee = new Marquee(ArtistText, ArtistShift);
         _timer.Tick += (_, _) => Tick();
         LinesCanvas.SizeChanged += (_, _) =>
         {
@@ -54,7 +58,11 @@ public partial class DesktopLyricsView : UserControl
             AlbumText.Text = track.Album != null && track.Album != track.Title ? track.Album : "";
             ShowLyrics(track.Key, Lyrics.Loading);
             Page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(600)));
+            _titleMarquee.Restart();
+            _artistMarquee.Restart();
         }
+        _titleMarquee.Running = true;
+        _artistMarquee.Running = true;
         if (old == null || !ReferenceEquals(old.Cover, track.Cover))
             SetCover(track.Cover);
         PauseGlyph.Visibility = track.IsPlaying ? Visibility.Collapsed : Visibility.Visible;
@@ -105,7 +113,120 @@ public partial class DesktopLyricsView : UserControl
     }
 
     /// <summary>Окно скрыто — ничего не пересчитываем.</summary>
-    public void Stop() => _timer.Stop();
+    public void Stop()
+    {
+        _timer.Stop();
+        _titleMarquee.Running = false;
+        _artistMarquee.Running = false;
+    }
+
+    /// <summary>
+    /// Бегущая строка, как в Spotify: длинный текст стоит, уезжает влево до конца, стоит и возвращается.
+    /// В паузах анимации нет (их отсчитывает таймер) — WPF не перерисовывает обои зря.
+    /// </summary>
+    private sealed class Marquee
+    {
+        /// <summary>Скорость в точках макета 1920×1080.</summary>
+        private const double Speed = 45;
+        private static readonly TimeSpan StartPause = TimeSpan.FromSeconds(2.5);
+        private static readonly TimeSpan EndPause = TimeSpan.FromSeconds(1.5);
+
+        // Мягкий край там, где текст продолжается: справа в начале, с обеих сторон в пути, слева в конце
+        private static readonly Brush FadeRight = Fade(1, 0);
+        private static readonly Brush FadeBoth = Fade(0, 0);
+        private static readonly Brush FadeLeft = Fade(0, 1);
+
+        private readonly FrameworkElement _text;
+        private readonly TranslateTransform _shift;
+        private readonly DispatcherTimer _pause = new();
+        private bool _running;
+        private bool _forward;
+        private double _overflow;
+
+        public Marquee(FrameworkElement text, TranslateTransform shift)
+        {
+            _text = text;
+            _shift = shift;
+            _text.SizeChanged += (_, _) => Restart();
+            _pause.Tick += (_, _) =>
+            {
+                _pause.Stop();
+                Scroll();
+            };
+        }
+
+        public bool Running
+        {
+            set
+            {
+                if (_running == value)
+                    return;
+                _running = value;
+                Restart();
+            }
+        }
+
+        /// <summary>Новый текст: снова с начала строки.</summary>
+        public void Restart()
+        {
+            _pause.Stop();
+            _shift.BeginAnimation(TranslateTransform.XProperty, null);
+            _shift.X = 0;
+            _forward = true;
+            var box = _text.Parent as FrameworkElement;
+            double width = box?.ActualWidth ?? 0;
+            _overflow = width > 0 ? _text.ActualWidth - width : 0;
+            if (box != null)
+                box.OpacityMask = _overflow > 1 ? FadeRight : null;
+            if (_running && _overflow > 1)
+                Wait(StartPause);
+        }
+
+        private static Brush Fade(double left, double right)
+        {
+            const double edge = 0.06;
+            var brush = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+            brush.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(255 * left), 0, 0, 0), 0));
+            brush.GradientStops.Add(new GradientStop(Colors.Black, edge));
+            brush.GradientStops.Add(new GradientStop(Colors.Black, 1 - edge));
+            brush.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(255 * right), 0, 0, 0), 1));
+            brush.Freeze();
+            return brush;
+        }
+
+        private void SetMask(Brush mask)
+        {
+            if (_text.Parent is FrameworkElement box)
+                box.OpacityMask = mask;
+        }
+
+        private void Wait(TimeSpan delay)
+        {
+            _pause.Interval = delay;
+            _pause.Start();
+        }
+
+        private void Scroll()
+        {
+            if (!_running)
+                return;
+            var animation = new DoubleAnimation(_forward ? -_overflow : 0, TimeSpan.FromSeconds(Math.Max(1, _overflow / Speed)))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            };
+            Timeline.SetDesiredFrameRate(animation, 30);
+            animation.Completed += (_, _) =>
+            {
+                if (!_running)
+                    return;
+                _forward = !_forward;
+                SetMask(_forward ? FadeRight : FadeLeft);
+                Wait(_forward ? StartPause : EndPause);
+            };
+            SetMask(FadeBoth);
+            _shift.BeginAnimation(TranslateTransform.XProperty, animation);
+        }
+    }
 
     private void Tick()
     {

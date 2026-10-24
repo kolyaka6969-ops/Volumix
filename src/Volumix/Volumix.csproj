@@ -24,8 +24,14 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Нативные библиотеки WPF лежат рядом с exe. Внутри exe они при каждой новой версии распаковывались
+         в %TEMP%\.net\Volumix — ещё десятки МБ на диске на каждую версию, и никто их не удалял. -->
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <!-- Без сжатия: сжатые сборки .NET при запуске распаковываются в память целиком (+80 МБ private, +160 МБ рабочего
+         набора в трее), а несжатые отображаются из файла. Установщик всё равно сжимает exe LZMA. -->
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <!-- Интерфейс только на русском: переводы сообщений .NET на другие 12 языков не нужны (−16 МБ до сжатия) -->
+    <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
   </PropertyGroup>
 
@@ -34,16 +40,8 @@
     <InternalsVisibleTo Include="Volumix.Tests" />
   </ItemGroup>
 
-  <!-- Модель распознавания речи лежит рядом с exe (build.ps1 скачивает её в models\) -->
-  <ItemGroup Condition="Exists('..\..\models')">
-    <None Include="..\..\models\**\*" Link="models\%(RecursiveDir)%(Filename)%(Extension)"
-          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
-  </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
-    <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
-    <PackageReference Include="Vosk" Version="0.3.38" />
     <PackageReference Include="WPF-UI" Version="3.0.5" />
   </ItemGroup>
 

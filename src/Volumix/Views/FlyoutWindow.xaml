@@ -29,18 +29,13 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="4,0,0,0" Text="Volumix" />
             <ui:Button Grid.Column="1" Appearance="Transparent" BorderThickness="0" Width="38" Height="34" Padding="0"
-                       ToolTip="Голосовая команда" Click="Voice_Click">
-                <TextBlock Style="{StaticResource Glyph}" Text="&#xE720;" />
-            </ui:Button>
-            <ui:Button Grid.Column="2" Appearance="Transparent" BorderThickness="0" Width="38" Height="34" Padding="0"
                        ToolTip="Горячие клавиши" Click="Hotkeys_Click">
                 <TextBlock Style="{StaticResource Glyph}" Text="&#xE765;" />
             </ui:Button>
-            <ui:Button Grid.Column="3" Appearance="Transparent" BorderThickness="0" Width="38" Height="34" Padding="0"
+            <ui:Button Grid.Column="2" Appearance="Transparent" BorderThickness="0" Width="38" Height="34" Padding="0"
                        ToolTip="Настройки" Click="Settings_Click">
                 <TextBlock Style="{StaticResource Glyph}" Text="&#xE713;" />
             </ui:Button>

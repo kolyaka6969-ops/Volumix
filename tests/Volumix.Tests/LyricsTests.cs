@@ -77,6 +77,48 @@ public class LyricsTests
         Assert.Contains(lyrics.Lines, l => l.Text.Contains("numb", StringComparison.OrdinalIgnoreCase));
     }
 
+    private const string SyncedLrc = "[00:01.00]раз\n[00:05.00]два\n[00:09.00]три";
+
+    /// <summary>Клип длиннее трека на пару секунд: синхронный текст всё равно важнее обычного у первого прочтения.</summary>
+    [Fact]
+    public void VideoPrefersSyncedLyricsWithLooseDuration()
+    {
+        var results = new List<LyricsService.LrcLibTrack>?[]
+        {
+            new() { new() { Duration = 149, PlainLyrics = "раз\nдва" } },       // другая версия, только текст
+            null,                                                              // запрос не удался
+            new() { new() { Duration = 191, SyncedLyrics = SyncedLrc } },      // ролик 195 с, трек 191 с
+        };
+        var picked = LyricsService.PickVideo(results, 195);
+        Assert.NotNull(picked);
+        Assert.Equal(LyricsStatus.Synced, picked.Value.Lyrics.Status);
+        Assert.Equal(2, picked.Value.Index);
+    }
+
+    /// <summary>Длительность не сошлась ни у кого — текст показывается, но без меток времени (иначе он бы врал).</summary>
+    [Fact]
+    public void VideoFallsBackToPlainWhenDurationDiffers()
+    {
+        var results = new List<LyricsService.LrcLibTrack>?[] { new() { new() { Duration = 150, SyncedLyrics = SyncedLrc } } };
+        var picked = LyricsService.PickVideo(results, 240);
+        Assert.NotNull(picked);
+        Assert.Equal(LyricsStatus.Plain, picked.Value.Lyrics.Status);
+        Assert.Null(LyricsService.PickVideo(new List<LyricsService.LrcLibTrack>?[] { new(), null }, 240));
+    }
+
+    [SkippableFact]
+    public async Task FindsSyncedLyricsForYouTubeVideo()
+    {
+        // Ролик «GONE.Fludd - FATHER» на YouTube идёт 3:15, а синхронный текст на lrclib — у версии на 3:11
+        var candidates = MediaSessionService.Candidates("FATHER", "GONE.Fludd").Take(4).ToList();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var (lyrics, _) = await LyricsService.FindVideoAsync(candidates, TimeSpan.FromSeconds(195), CancellationToken.None);
+        Skip.If(lyrics.Status == LyricsStatus.Error, "lrclib.net недоступен");
+
+        Assert.Equal(LyricsStatus.Synced, lyrics.Status);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"поиск занял {watch.Elapsed.TotalSeconds:N1} с");
+    }
+
     /// <summary>Рисует обои вне экрана и сохраняет картинку в %TEMP%\volumix-desktop.png, чтобы на неё посмотреть.</summary>
     [Fact]
     public void RendersDesktopView()

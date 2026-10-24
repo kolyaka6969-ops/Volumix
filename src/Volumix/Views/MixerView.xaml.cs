@@ -12,9 +12,37 @@ public partial class MixerView : UserControl
     {
         InitializeComponent();
         DataContext = App.Mixer;
-        IsVisibleChanged += (_, e) => App.Mixer.SetViewVisible((bool)e.NewValue);
+        IsVisibleChanged += (_, _) => UpdateActive();
         PreviewMouseWheel += OnPreviewMouseWheel;
     }
+
+    private Window? _window;
+    private bool _active;
+
+    /// <summary>
+    /// Индикаторы уровня опрашиваются 20 раз в секунду — только пока микшер действительно на экране.
+    /// Свёрнутое окно остаётся IsVisible, поэтому смотрим ещё и на его состояние.
+    /// </summary>
+    private void UpdateActive()
+    {
+        var window = Window.GetWindow(this);
+        if (!ReferenceEquals(window, _window))
+        {
+            if (_window != null)
+                _window.StateChanged -= OnWindowStateChanged;
+            _window = window;
+            if (_window != null)
+                _window.StateChanged += OnWindowStateChanged;
+        }
+
+        bool active = IsVisible && _window?.WindowState != WindowState.Minimized;
+        if (active == _active)
+            return;
+        _active = active;
+        App.Mixer.SetViewVisible(active);
+    }
+
+    private void OnWindowStateChanged(object? sender, System.EventArgs e) => UpdateActive();
 
     /// <summary>Колесо мыши над ползунком меняет громкость, а не прокручивает список.</summary>
     private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)

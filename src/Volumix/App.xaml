@@ -82,7 +82,7 @@
                         <StackPanel Grid.Row="1" Grid.Column="1" VerticalAlignment="Center">
                             <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
                                     TickFrequency="1" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
-                                    Value="{Binding Volume, Mode=TwoWay}" Margin="0,4,0,0" />
+                                    Value="{Binding Volume, Mode=TwoWay}" Margin="0,4,0,0" Loaded="VolumeSlider_Loaded" />
                             <!-- Индикатор уровня сигнала -->
                             <Border Height="3" CornerRadius="1.5" Margin="10,1,10,0" ClipToBounds="True"
                                     Background="{DynamicResource ControlStrongStrokeColorDisabledBrush}">

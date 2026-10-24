@@ -16,11 +16,6 @@ public partial class OsdWindow : Window
     private static readonly TimeSpan LongDelay = TimeSpan.FromMilliseconds(2800);
 
     private readonly DispatcherTimer _hideTimer = new();
-    private readonly DoubleAnimation _pulse = new(1, 0.35, TimeSpan.FromMilliseconds(650))
-    {
-        AutoReverse = true,
-        RepeatBehavior = RepeatBehavior.Forever,
-    };
 
     public OsdWindow()
     {
@@ -57,19 +52,6 @@ public partial class OsdWindow : Window
         ValueText.Text = "";
         Bar.Visibility = Visibility.Collapsed;
         Pop(detail == null ? ShortDelay : LongDelay);
-    }
-
-    /// <summary>Режим «слушаю»: мигающий микрофон, текст по мере распознавания, без автоскрытия.</summary>
-    public void ShowListening(string text)
-    {
-        SetIcon(null, "");
-        AppGlyph.Foreground = (Brush)FindResource("AccentFillColorDefaultBrush");
-        AppGlyph.BeginAnimation(OpacityProperty, _pulse);
-        NameText.Text = text;
-        SetDetail(null);
-        ValueText.Text = "";
-        Bar.Visibility = Visibility.Collapsed;
-        Pop(null);
     }
 
     private void SetDetail(string? detail)

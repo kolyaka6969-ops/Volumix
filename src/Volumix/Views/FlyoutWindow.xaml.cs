@@ -46,9 +46,6 @@ public partial class FlyoutWindow : FluentWindow
         Top = area.Bottom - ActualHeight - 12;
     }
 
-    private void Voice_Click(object sender, RoutedEventArgs e) =>
-        ((App)Application.Current).ToggleVoice();
-
     private void Hotkeys_Click(object sender, RoutedEventArgs e)
     {
         HideFlyout();
