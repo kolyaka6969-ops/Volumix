@@ -383,7 +383,8 @@ public sealed class MediaSessionService : IDisposable
         // уточняем, что это за сайт: Яндекс Музыка, YouTube Music или обычный ролик YouTube.
         // Сверяем с названием как есть: после очистки «[Official Video]» его в заголовке окна уже не найти.
         bool sourceChanged = false;
-        if (session != null && IsBrowser(session.SourceAppUserModelId) && _mode == MusicSourceMode.Auto)
+        bool browser = session != null && IsBrowser(session.SourceAppUserModelId);
+        if (browser && _mode == MusicSourceMode.Auto)
         {
             var matched = _browser.Match(title);
             if (matched != BrowserMusic.None)
@@ -416,14 +417,20 @@ public sealed class MediaSessionService : IDisposable
         {
             // Плеер иногда присылает обложку чуть позже названия
             var cover = thumbnail == null ? null : await ReadAsync(thumbnail);
+            // Если сайт не дал обложку (так бывает у Яндекс Музыки в Chrome), браузер подставляет свой значок
+            if (cover != null && browser && IsAppIcon(cover))
+                cover = null;
             if (_disposed || session != _session || version != _refreshVersion)
                 return;
             _coverKey = key;
-            Cover = cover;
+            if (cover != null || newTrack || sourceChanged)
+                Cover = cover;
         }
 
         // YouTube отдаёт в медиа-сеансе фавикон сайта, а на обоях нужна обложка трека — ищем её в каталогах.
-        if (_source == MusicSource.YouTube && title != null && (newTrack || sourceChanged || _catalogKey != key))
+        // Так же и с другими сайтами в браузере, если вместо обложки пришёл значок браузера.
+        if ((_source == MusicSource.YouTube || (browser && Cover == null)) && title != null &&
+            (newTrack || sourceChanged || _catalogKey != key))
         {
             var variants = Candidates(title, artist).Take(4).ToList();
             var art = await CoverArtService.FindAsync(variants);
@@ -680,6 +687,37 @@ public sealed class MediaSessionService : IDisposable
         catch (Exception)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Значок приложения (Chrome, Edge) — картинка с полностью прозрачными углами. Обложки альбомов
+    /// непрозрачны (у Spotify углы бывают полупрозрачными, но не пустыми), а JPEG прозрачным не бывает вовсе.
+    /// </summary>
+    internal static bool IsAppIcon(byte[] data)
+    {
+        try
+        {
+            using var ms = new MemoryStream(data);
+            var frame = System.Windows.Media.Imaging.BitmapDecoder.Create(ms,
+                System.Windows.Media.Imaging.BitmapCreateOptions.None,
+                System.Windows.Media.Imaging.BitmapCacheOption.OnLoad).Frames[0];
+            if (frame.Format.BitsPerPixel < 32 || frame.PixelWidth < 2 || frame.PixelHeight < 2)
+                return false;
+            var bgra = new System.Windows.Media.Imaging.FormatConvertedBitmap(frame, System.Windows.Media.PixelFormats.Bgra32, null, 0);
+            int w = bgra.PixelWidth, h = bgra.PixelHeight;
+            var pixel = new byte[4];
+            foreach (var (x, y) in new[] { (0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1) })
+            {
+                bgra.CopyPixels(new System.Windows.Int32Rect(x, y, 1, 1), pixel, 4, 0);
+                if (pixel[3] >= 16)
+                    return false;
+            }
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 

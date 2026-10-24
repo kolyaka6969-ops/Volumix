@@ -5,6 +5,9 @@ using Volumix.Services;
 
 namespace Volumix.Tests;
 
+// Размер значка зависит от режима DPI процесса, а его переключает первая загрузка WPF —
+// поэтому тесты, которые трогают WPF-картинки, не идут параллельно с этими
+[Collection("DPI")]
 public class MediaTrayTests
 {
     [Theory]

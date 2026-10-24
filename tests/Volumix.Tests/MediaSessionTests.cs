@@ -3,6 +3,7 @@ using Volumix.Services;
 namespace Volumix.Tests;
 
 /// <summary>Опознание плеера, сайта в браузере и чистка названий — без запущенных плееров и окон.</summary>
+[Collection("DPI")]
 public class MediaSessionTests
 {
     [Theory]
@@ -247,4 +248,27 @@ public class MediaSessionTests
     [InlineData("Группа крови", "Группа крови")]
     public void RemovesBracketsForSearch(string title, string expected) =>
         Assert.Equal(expected, MediaSessionService.WithoutBrackets(title));
+
+    /// <summary>Chrome без обложки от сайта присылает свой значок — круг на прозрачном фоне.</summary>
+    [Fact]
+    public void RecognizesBrowserIconInsteadOfCover()
+    {
+        Assert.True(MediaSessionService.IsAppIcon(Png(System.Drawing.Color.Transparent)));
+        Assert.False(MediaSessionService.IsAppIcon(Png(System.Drawing.Color.DarkRed)));
+        Assert.False(MediaSessionService.IsAppIcon(Png(System.Drawing.Color.FromArgb(133, 40, 40, 40))));  // как у Spotify
+        Assert.False(MediaSessionService.IsAppIcon(new byte[] { 1, 2, 3 }));
+    }
+
+    private static byte[] Png(System.Drawing.Color background)
+    {
+        using var bmp = new System.Drawing.Bitmap(64, 64, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = System.Drawing.Graphics.FromImage(bmp))
+        {
+            g.Clear(background);
+            g.FillEllipse(System.Drawing.Brushes.Gold, 4, 4, 56, 56);
+        }
+        using var ms = new System.IO.MemoryStream();
+        bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+        return ms.ToArray();
+    }
 }
