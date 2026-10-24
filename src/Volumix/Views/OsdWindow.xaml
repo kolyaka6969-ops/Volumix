@@ -1,0 +1,51 @@
+<Window
+    x:Class="Volumix.Views.OsdWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Volumix OSD"
+    WindowStyle="None"
+    AllowsTransparency="True"
+    Background="Transparent"
+    ResizeMode="NoResize"
+    ShowInTaskbar="False"
+    ShowActivated="False"
+    Topmost="True"
+    Focusable="False"
+    SizeToContent="WidthAndHeight"
+    FontFamily="{StaticResource UiFont}">
+    <Border x:Name="Root" Margin="16" Width="340" Padding="16,12" CornerRadius="8" BorderThickness="1"
+            Background="{DynamicResource SolidBackgroundFillColorQuarternaryBrush}"
+            BorderBrush="{DynamicResource SurfaceStrokeColorFlyoutBrush}">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270" Opacity="0.28" />
+        </Border.Effect>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="40" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid Width="28" Height="28" HorizontalAlignment="Left" VerticalAlignment="Center">
+                <Image x:Name="AppIcon" RenderOptions.BitmapScalingMode="HighQuality" />
+                <TextBlock x:Name="AppGlyph" Style="{StaticResource Glyph}" FontSize="22" />
+            </Grid>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock x:Name="NameText" Style="{StaticResource Body}" FontSize="13" TextWrapping="Wrap" MaxHeight="40"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="DetailText" Style="{StaticResource Caption}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"
+                           TextWrapping="NoWrap" Visibility="Collapsed" />
+                <Border x:Name="Bar" Height="4" CornerRadius="2" Margin="0,8,0,0" ClipToBounds="True"
+                        Background="{DynamicResource ControlStrongStrokeColorDisabledBrush}">
+                    <Border CornerRadius="2" RenderTransformOrigin="0,0.5"
+                            Background="{DynamicResource AccentFillColorDefaultBrush}">
+                        <Border.RenderTransform>
+                            <ScaleTransform x:Name="BarScale" ScaleX="0" />
+                        </Border.RenderTransform>
+                    </Border>
+                </Border>
+            </StackPanel>
+            <TextBlock x:Name="ValueText" Grid.Column="2" Style="{StaticResource Body}" FontWeight="SemiBold" MinWidth="32"
+                       TextAlignment="Right" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0" />
+        </Grid>
+    </Border>
+</Window>

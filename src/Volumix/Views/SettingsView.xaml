@@ -1,0 +1,172 @@
+<UserControl
+    x:Class="Volumix.Views.SettingsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:vm="clr-namespace:Volumix.ViewModels">
+    <UserControl.Resources>
+        <Style x:Key="RowGrid" TargetType="Grid">
+            <Setter Property="MinHeight" Value="44" />
+        </Style>
+    </UserControl.Resources>
+    <StackPanel>
+        <TextBlock Style="{StaticResource SectionHeader}" Text="Запуск" Margin="2,0,0,8" />
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE7E8;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Запускать вместе с Windows" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Volumix будет тихо стартовать в области уведомлений" />
+                </StackPanel>
+                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding Autostart}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE73F;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Сворачивать в трей при закрытии" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Крестик прячет окно, горячие клавиши продолжают работать" />
+                </StackPanel>
+                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding CloseToTray}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <TextBlock Style="{StaticResource SectionHeader}" Text="Громкость" />
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="44" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE995;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Шаг изменения громкости" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Для горячих клавиш и колёсика мыши" />
+                </StackPanel>
+                <Slider Grid.Column="2" Width="170" Minimum="1" Maximum="25" TickFrequency="1"
+                        IsSnapToTickEnabled="True" IsMoveToPointEnabled="True" VerticalAlignment="Center"
+                        Value="{Binding VolumeStep}" />
+                <TextBlock Grid.Column="3" Style="{StaticResource Body}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                           Text="{Binding VolumeStep, StringFormat={}{0}%}" />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE7F4;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Всплывающий индикатор" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Показывать громкость внизу экрана при нажатии горячих клавиш" />
+                </StackPanel>
+                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding ShowOsd}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <TextBlock Style="{StaticResource SectionHeader}" Text="Оформление" />
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE790;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Тема" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Цвет акцента берётся из настроек Windows" />
+                </StackPanel>
+                <ComboBox Grid.Column="2" Width="180" ItemsSource="{x:Static vm:SettingsViewModel.Themes}"
+                          DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding Theme}" />
+            </Grid>
+        </Border>
+
+        <TextBlock Style="{StaticResource SectionHeader}" Text="Голосовое управление" />
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE720;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Голосовые команды" />
+                    <TextBlock Style="{StaticResource Caption}" Text="{Binding VoiceStatus}" />
+                </StackPanel>
+                <ui:Button Grid.Column="2" Margin="0,0,12,0" Click="TryVoice_Click"
+                           IsEnabled="{Binding VoiceEnabled}" ToolTip="Сказать команду">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" FontSize="14" Text="&#xE720;" Margin="0,0,8,0" />
+                        <TextBlock Text="Сказать" />
+                    </StackPanel>
+                </ui:Button>
+                <ui:ToggleSwitch Grid.Column="3" IsChecked="{Binding VoiceEnabled}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" VerticalAlignment="Top"
+                           Margin="0,2,0,0" Text="&#xE8BD;" />
+                <StackPanel Grid.Column="1">
+                    <TextBlock Style="{StaticResource Body}" Text="Что можно сказать" Margin="0,0,0,6" />
+                    <TextBlock Style="{StaticResource Caption}" LineHeight="20">
+                        <Run FontWeight="SemiBold">Громкость:</Run> «громкость сорок», «спотифай на пятьдесят», «дискорд потише»,
+                        «хром громче на двадцать», «сделай это окно тише»<LineBreak />
+                        <Run FontWeight="SemiBold">Звук:</Run> «выключи звук», «заглуши телеграм», «включи звук в дискорде»<LineBreak />
+                        <Run FontWeight="SemiBold">Устройства:</Run> «переключи на наушники», «следующее устройство»<LineBreak />
+                        <Run FontWeight="SemiBold">Настройки:</Run> «тёмная тема», «включи автозапуск», «шаг громкости пять»,
+                        «выключи индикатор», «сворачивать в трей»<LineBreak />
+                        <Run FontWeight="SemiBold">Окна:</Run> «открой микшер», «открой настройки», «покажи горячие клавиши», «закрой»
+                    </TextBlock>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <TextBlock Style="{StaticResource SectionHeader}" Text="О программе" />
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Image Width="28" Height="28" HorizontalAlignment="Left" Source="pack://application:,,,/Assets/app.ico" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Volumix" />
+                    <TextBlock Style="{StaticResource Caption}" Text="{Binding Version}" />
+                </StackPanel>
+                <ui:Button Grid.Column="2" Content="Папка настроек" Click="OpenSettingsFolder_Click" />
+            </Grid>
+        </Border>
+    </StackPanel>
+</UserControl>
