@@ -26,13 +26,12 @@ public enum MusicSourceMode
 }
 
 /// <summary>Что играет. Позиция — на момент <see cref="PositionTime"/>, во время игры её досчитываем по часам.</summary>
-/// <param name="ShownTitle">Что писать на экране, если не <see cref="Title"/>: у роликов YouTube — название как на YouTube,
-/// а <see cref="Title"/> — песня из него, по которой ищутся текст и обложка.</param>
-/// <param name="ShownArtist">То же для исполнителя: у роликов — канал.</param>
+/// <param name="VideoTitle">У роликов YouTube — название ролика как есть, с пометками вроде «(Official Video)»:
+/// по ним видно, что это музыка. <see cref="Title"/> — песня из него.</param>
 /// <param name="CoverIsFrame">Обложка — кадр ролика YouTube: официальной в каталогах не нашлось.</param>
 public sealed record NowPlaying(string Title, string? Artist, string? Album, byte[]? Cover, bool IsPlaying,
     TimeSpan Position, DateTimeOffset PositionTime, TimeSpan Duration, MusicSource Source = MusicSource.None,
-    string? ShownTitle = null, string? ShownArtist = null, bool CoverIsFrame = false)
+    string? VideoTitle = null, bool CoverIsFrame = false)
 {
     /// <summary>Один и тот же трек, даже если сменились позиция или обложка.</summary>
     public string Key => $"{Artist}\n{Title}\n{Album}";
@@ -152,8 +151,7 @@ public sealed class MediaSessionService : IDisposable
 
     public NowPlaying? NowPlaying => _session == null || Title == null ? null
         : new(Title, Artist, Album, Cover, IsPlaying, Position, PositionTime, Duration, _source,
-            _source == MusicSource.YouTube ? _videoTitle : null, _source == MusicSource.YouTube ? _videoChannel : null,
-            _coverIsFrame);
+            _source == MusicSource.YouTube ? _videoTitle : null, _coverIsFrame);
 
     public event Action? Changed;
 
@@ -458,7 +456,7 @@ public sealed class MediaSessionService : IDisposable
             }
         }
 
-        // На экране ролик подписан, как на YouTube; очищенные песня и исполнитель — для поиска текста и обложки
+        // Ролик как он записан на YouTube — по нему ищется кадр, когда официальной обложки нет
         _videoTitle = title == null ? null : WithoutSiteName(title);
         _videoChannel = artist;
         if (title != null)

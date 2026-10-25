@@ -84,12 +84,9 @@ public sealed class MediaTrayIcons : IDisposable
             MusicSource.YandexMusic => "Яндекс Музыка",
             _ => "Плеер",
         };
-        // Ролик YouTube подписан так же, как на самом YouTube
-        var now = _media.NowPlaying;
-        var track = now == null ? player
-            : now.ShownTitle != null ? now.ShownTitle
-            : now.Artist == null ? now.Title
-            : $"{now.Artist} — {now.Title}";
+        var track = _media.Title == null ? player
+            : _media.Artist == null ? _media.Title
+            : $"{_media.Artist} — {_media.Title}";
         _playPause.Text = Trim($"{(_media.IsPlaying ? "Пауза" : "Играть")}\n{track}");
 
         if (show == _shown)

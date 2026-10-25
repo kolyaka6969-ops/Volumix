@@ -171,8 +171,8 @@ public partial class DesktopLyricsView : UserControl
         if (old?.Key != track.Key)
         {
             _scrub = null; // тянули полосу прошлого трека
-            TitleText.Text = track.ShownTitle ?? track.Title;
-            ArtistText.Text = track.ShownArtist ?? track.Artist ?? "";
+            TitleText.Text = track.Title;
+            ArtistText.Text = track.Artist ?? "";
             AlbumText.Text = track.Album != null && track.Album != track.Title ? track.Album : "";
             ShowLyrics(track.Key, Lyrics.Loading);
             Page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(600)));

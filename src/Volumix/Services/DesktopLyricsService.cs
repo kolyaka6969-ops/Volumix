@@ -260,7 +260,7 @@ public sealed class DesktopLyricsService : IDisposable
                     return;
                 // Неофициальный клип или кавер: ни текста, ни обложки в каталогах, но по названию видно, что это музыка.
                 // На обоях будет кадр ролика
-                if (art != null || (!failed && IsMusicVideo(track.ShownTitle ?? track.Title)))
+                if (art != null || (!failed && IsMusicVideo(track.VideoTitle ?? track.Title)))
                 {
                     Confirm(track, null, Lyrics.NotFound);
                 }

@@ -231,7 +231,7 @@ public class LyricsTests
         Assert.Null(error);
     }
 
-    /// <param name="video">Клип без текста: название как на YouTube и кадр 16:9 крупно вместо текста.</param>
+    /// <param name="video">Клип без текста: кадр 16:9 крупно вместо текста.</param>
     private static void Render(bool video)
     {
         const int width = 1536, height = 864; // 1920×1080 при масштабе 125 %
@@ -252,7 +252,7 @@ public class LyricsTests
         var now = DateTimeOffset.Now;
         var track = video
             ? new NowPlaying("Numb", "Linkin Park", null, MakeCover(480, 270), true, TimeSpan.FromSeconds(31), now,
-                TimeSpan.FromSeconds(214), MusicSource.YouTube, "Linkin Park - Numb (Fan Made Video)", "LP Fans")
+                TimeSpan.FromSeconds(214), MusicSource.YouTube, "Linkin Park - Numb (Fan Made Video)", CoverIsFrame: true)
             : new NowPlaying("Numb", "Linkin Park", "Meteora", MakeCover(300, 300), true,
                 TimeSpan.FromSeconds(31), now, TimeSpan.FromSeconds(186));
         view.ShowTrack(track);
