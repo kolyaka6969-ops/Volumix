@@ -51,6 +51,11 @@ public sealed class AppSettings
     public const int DefaultMarqueeFps = 60;
     public const int MinMarqueeFps = 15;
     public const int MaxMarqueeFps = 240;
+    /// <summary>На каких мониторах обои с песней: <see cref="AllScreens"/>, <see cref="PrimaryScreen"/> или имя устройства.</summary>
+    public string DesktopScreen { get; set; } = AllScreens;
+
+    public const string AllScreens = "";
+    public const string PrimaryScreen = "primary";
     /// <summary>Откуда брать песню: Spotify, Яндекс Музыка (в том числе в браузере) или и то, и другое.</summary>
     public MusicSourceMode Source { get; set; } = MusicSourceMode.Auto;
     /// <summary>Версия формата настроек, для добавления новых значений по умолчанию старым пользователям.</summary>

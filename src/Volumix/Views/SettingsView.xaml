@@ -101,6 +101,24 @@
                     <ColumnDefinition Width="40" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE7F4;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Мониторы" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="На каких экранах показывать песню вместо обоев. Монитор, подключённый позже, подхватывается сам" />
+                </StackPanel>
+                <ComboBox Grid.Column="2" Width="280" ItemsSource="{Binding Screens}"
+                          DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding DesktopScreen}" />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="44" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE8E4;" />

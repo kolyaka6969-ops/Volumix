@@ -1,15 +1,18 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using Volumix.Views;
+using Forms = System.Windows.Forms;
 
 namespace Volumix.Services;
 
 /// <summary>
 /// Песня и её текст на рабочем столе вместо обоев, пока играет Spotify или Яндекс Музыка (в том числе в браузере).
-/// Окно работает в своём потоке: Explorer связывает очередь ввода дочернего окна со своей, и любое подвисание
+/// Окна работают в своём потоке: Explorer связывает очередь ввода дочернего окна со своей, и любое подвисание
 /// интерфейса Volumix подвесило бы рабочий стол.
 /// </summary>
 public sealed class DesktopLyricsService : IDisposable
@@ -24,19 +27,28 @@ public sealed class DesktopLyricsService : IDisposable
     private readonly MediaSessionService _media;
     private readonly DispatcherTimer _fetchTimer;
     private Dispatcher? _desktop;
-    // Живут в потоке окна, трогать только через Post
-    private DesktopLyricsView? _view;
-    private DesktopLayer? _layer;
     private CancellationTokenSource? _fetch;
     private string? _lyricsKey;
+    private string? _trackKey;
     // Ключ ролика YouTube, для которого текст нашёлся: только такие ролики и попадают на обои
     private string? _music;
     // Разобранные название и исполнитель для подтверждённой песни из YouTube
-    private NowPlaying? _musicTrack;
+    private (string Title, string? Artist)? _musicName;
+    // Ролик YouTube, который сменил на обоях другую песню с YouTube (джем, плейлист): пока он проверяется,
+    // обои не гаснут — иначе они мигали бы на каждом треке
+    private string? _pending;
+    private bool _showingYouTube;
     private bool _enabled;
     private bool _failed;
     private double _marqueeSpeed = AppSettings.DefaultMarqueeSpeed;
     private int _marqueeFps = AppSettings.DefaultMarqueeFps;
+    private string _screen = AppSettings.AllScreens;
+
+    // Живут в потоке окон, трогать только через Post
+    private readonly List<ScreenView> _screens = new();
+    private NowPlaying? _shownTrack;
+    private (string Key, Lyrics Lyrics)? _shownLyrics;
+    private bool _shown;
 
     public DesktopLyricsService(MediaSessionService media, Dispatcher dispatcher)
     {
@@ -63,7 +75,7 @@ public sealed class DesktopLyricsService : IDisposable
         }
     }
 
-    /// <summary>Скорость бегущей строки названия; окно получает её в своём потоке.</summary>
+    /// <summary>Скорость бегущей строки названия; окна получают её в своём потоке.</summary>
     public double MarqueeSpeed
     {
         get => _marqueeSpeed;
@@ -72,7 +84,7 @@ public sealed class DesktopLyricsService : IDisposable
             if (_marqueeSpeed == value)
                 return;
             _marqueeSpeed = value;
-            Post(() => _view!.MarqueeSpeed = value);
+            Post(() => _screens.ForEach(s => s.View.MarqueeSpeed = value));
         }
     }
 
@@ -85,38 +97,49 @@ public sealed class DesktopLyricsService : IDisposable
             if (_marqueeFps == value)
                 return;
             _marqueeFps = value;
-            Post(() => _view!.MarqueeFps = value);
+            Post(() => _screens.ForEach(s => s.View.MarqueeFps = value));
+        }
+    }
+
+    /// <summary>На каких мониторах показывать: все, основной или один по имени устройства (\\.\DISPLAY2).</summary>
+    public string Screen
+    {
+        get => _screen;
+        set
+        {
+            if (_screen == value)
+                return;
+            _screen = value;
+            Post(() => Rebuild(value));
         }
     }
 
     private void Sync()
     {
         var track = _enabled ? _media.NowPlaying : null;
+        if (track?.Key != _trackKey)
+        {
+            _trackKey = track?.Key;
+            _pending = track?.Source == MusicSource.YouTube && _showingYouTube ? track.Key : null;
+            if (track == null || track.Key != _music)
+                _musicName = null;
+        }
         // Обычное видео YouTube не должно висеть на обоях: пока текст не подтвердил, что это песня, прячем.
         // Обложка у YouTube берётся только из каталога песен — если она нашлась, это песня, и текст можно
         // не ждать: он подгрузится позже.
         bool allowed = track != null &&
-                       (track.Source != MusicSource.YouTube || track.Key == _music || track.Cover != null);
-        // Для подтверждённой песни из YouTube показываем разобранные название и исполнителя,
-        // а не заголовок ролика с названием канала.
-        var shown = allowed && _musicTrack != null && track!.Key == _music ? _musicTrack : track;
-        if (track == null || track.Key != _music)
-            _musicTrack = null;
+                       (track.Source != MusicSource.YouTube || track.Key == _music || track.Key == _pending || track.Cover != null);
+        _showingYouTube = allowed && track!.Source == MusicSource.YouTube;
+        var shown = allowed ? Shown(track!) : null;
         if (track != null || _desktop != null)
         {
             EnsureThread();
             Post(() =>
             {
-                if (!allowed)
-                {
-                    _view!.Stop();
-                    _layer!.Visible = false;
-                }
+                if (shown == null)
+                    HideOnDesktop();
                 else
-                {
-                    _view!.ShowTrack(shown!);
-                    _layer!.Visible = true;
-                }
+                    ShowOnDesktop(shown);
             });
         }
 
@@ -133,6 +156,13 @@ public sealed class DesktopLyricsService : IDisposable
             _fetchTimer.Start();
         }
     }
+
+    /// <summary>
+    /// Для подтверждённой песни из YouTube — разобранные название и исполнитель, а не заголовок ролика
+    /// с названием канала. Обложка, позиция и пауза всегда свежие, от плеера.
+    /// </summary>
+    private NowPlaying Shown(NowPlaying track) =>
+        track.Key == _music && _musicName is { } name ? track with { Title = name.Title, Artist = name.Artist } : track;
 
     private async Task FetchAsync()
     {
@@ -151,39 +181,25 @@ public sealed class DesktopLyricsService : IDisposable
             if (cts.IsCancellationRequested)
                 return;
             bool failed = result.Status == LyricsStatus.Error;
-            Lyrics? found = IsMusic(result) ? result : null;
-            (string Title, string? Artist)? best = found != null ? candidates[index] : null;
 
-            if (found == null)
+            if (!IsMusic(result))
             {
                 // Текст мог не найтись из-за недоступной базы текстов. Тогда пускаем песню на обои,
                 // если её знает каталог обложек: случайные ролики и влоги там не находятся.
-                var art = await CoverArtService.FindAsync(
-                    MediaSessionService.Candidates(track.Title, track.Artist).Take(4).ToList(), cts.Token);
+                var art = await CoverArtService.FindAsync(candidates, cts.Token);
                 if (cts.IsCancellationRequested)
                     return;
                 if (art != null)
                 {
-                    _music = track.Key;
-                    _musicTrack = track;
-                    Post(() =>
-                    {
-                        _view!.ShowTrack(track);
-                        _view.ShowLyrics(track.Key, Lyrics.NotFound);
-                        _layer!.Visible = true;
-                    });
-                    if (failed)
-                    {
-                        _fetchTimer.Interval = RetryDelay;
-                        _fetchTimer.Start();
-                    }
-                    return;
+                    Confirm(track, null, Lyrics.NotFound);
                 }
-                Post(() =>
+                // Базы не ответили, а ролик пришёл следом за песней — оставляем на обоях до повторной проверки
+                else if (!(failed && track.Key == _pending))
                 {
-                    _view!.Stop();
-                    _layer!.Visible = false;
-                });
+                    _pending = null;
+                    _showingYouTube = false;
+                    Post(HideOnDesktop);
+                }
                 if (failed)
                 {
                     _fetchTimer.Interval = RetryDelay;
@@ -192,17 +208,8 @@ public sealed class DesktopLyricsService : IDisposable
                 return;
             }
 
-            _music = track.Key;
-            var shown = best is { } parsed
-                ? track with { Title = parsed.Title, Artist = parsed.Artist ?? track.Artist }
-                : track;
-            _musicTrack = shown;
-            Post(() =>
-            {
-                _view!.ShowTrack(shown);
-                _view.ShowLyrics(shown.Key, found);
-                _layer!.Visible = true;
-            });
+            var (title, artist) = candidates[index];
+            Confirm(track, (title, artist ?? track.Artist), result);
             return;
         }
 
@@ -210,12 +217,29 @@ public sealed class DesktopLyricsService : IDisposable
         if (cts.IsCancellationRequested)
             return;
 
-        Post(() => _view!.ShowLyrics(track.Key, lyrics));
+        Post(() => LyricsOnDesktop(track.Key, lyrics));
         if (lyrics.Status == LyricsStatus.Error)
         {
             _fetchTimer.Interval = RetryDelay;
             _fetchTimer.Start();
         }
+    }
+
+    /// <summary>Ролик YouTube оказался песней: показываем его на обоях.</summary>
+    private void Confirm(NowPlaying track, (string Title, string? Artist)? name, Lyrics lyrics)
+    {
+        _music = track.Key;
+        _musicName = name;
+        _pending = null;
+        _showingYouTube = true;
+        // Пока искали текст, плеер мог прислать обложку из каталога и новую позицию — берём свежие
+        var current = _media.NowPlaying is { } now && now.Key == track.Key ? now : track;
+        var shown = Shown(current);
+        Post(() =>
+        {
+            ShowOnDesktop(shown);
+            LyricsOnDesktop(shown.Key, lyrics);
+        });
     }
 
     /// <summary>Текст нашёлся — значит ролик с песней, а не случайное видео.</summary>
@@ -226,6 +250,7 @@ public sealed class DesktopLyricsService : IDisposable
     {
         if (_desktop != null || _failed)
             return;
+        var screen = _screen;
         using var ready = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
@@ -239,8 +264,7 @@ public sealed class DesktopLyricsService : IDisposable
                     App.LogError(e.Exception);
                     e.Handled = true;
                 };
-                _view = new DesktopLyricsView { MarqueeSpeed = _marqueeSpeed, MarqueeFps = _marqueeFps };
-                _layer = new DesktopLayer(_view);
+                Rebuild(screen);
                 _desktop = dispatcher;
             }
             catch (Exception ex)
@@ -262,6 +286,90 @@ public sealed class DesktopLyricsService : IDisposable
         thread.Start();
         ready.Wait();
         _failed = _desktop == null;
+        if (!_failed)
+            SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+    }
+
+    // Подключили или сняли монитор, сменили разрешение
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        var screen = _screen;
+        Post(() => Rebuild(screen));
+    }
+
+    /// <summary>Мониторы, на которых должны быть обои: имена устройств, null — основной.</summary>
+    internal static IReadOnlyList<string?> Devices(string setting)
+    {
+        var all = Forms.Screen.AllScreens;
+        if (setting == AppSettings.AllScreens && all.Length > 0)
+            return all.Select(s => (string?)s.DeviceName).ToList();
+        if (setting != AppSettings.PrimaryScreen && all.Any(s => s.DeviceName == setting))
+            return new string?[] { setting };
+        // Выбранный монитор отключён — показываем на основном
+        return new string?[] { null };
+    }
+
+    // ---------- Дальше — только в потоке окон ----------
+
+    /// <summary>Своё окно на каждый нужный монитор: макет у каждого подгоняется под его экран.</summary>
+    private void Rebuild(string setting)
+    {
+        var devices = Devices(setting);
+        for (int i = _screens.Count - 1; i >= 0; i--)
+        {
+            if (devices.Contains(_screens[i].Device))
+                continue;
+            _screens[i].View.Stop();
+            _screens[i].Layer.Dispose();
+            _screens.RemoveAt(i);
+        }
+        foreach (var device in devices)
+        {
+            if (_screens.Any(s => s.Device == device))
+                continue;
+            var view = new DesktopLyricsView { MarqueeSpeed = _marqueeSpeed, MarqueeFps = _marqueeFps };
+            var screen = new ScreenView(device, view, new DesktopLayer(view, device));
+            _screens.Add(screen);
+            if (!_shown || _shownTrack == null)
+                continue;
+            // Новый монитор подхватывает то, что уже показано на остальных
+            view.ShowTrack(_shownTrack);
+            if (_shownLyrics is { } lyrics)
+                view.ShowLyrics(lyrics.Key, lyrics.Lyrics);
+            screen.Layer.Visible = true;
+        }
+    }
+
+    private void ShowOnDesktop(NowPlaying track)
+    {
+        if (_shownTrack?.Key != track.Key)
+            _shownLyrics = null;
+        _shownTrack = track;
+        _shown = true;
+        foreach (var screen in _screens)
+        {
+            screen.View.ShowTrack(track);
+            screen.Layer.Visible = true;
+        }
+    }
+
+    private void HideOnDesktop()
+    {
+        _shown = false;
+        foreach (var screen in _screens)
+        {
+            screen.View.Stop();
+            screen.Layer.Visible = false;
+        }
+    }
+
+    private void LyricsOnDesktop(string key, Lyrics lyrics)
+    {
+        if (_shownTrack?.Key != key)
+            return;
+        _shownLyrics = (key, lyrics);
+        foreach (var screen in _screens)
+            screen.View.ShowLyrics(key, lyrics);
     }
 
     private void Post(Action action) => _desktop?.BeginInvoke(action);
@@ -270,16 +378,20 @@ public sealed class DesktopLyricsService : IDisposable
     {
         _media.Changed -= Sync;
         _media.TimelineChanged -= Sync;
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _fetchTimer.Stop();
         _fetch?.Cancel();
         if (_desktop is not { } desktop)
             return;
         try
         {
-            // Окно закрываем в его потоке и дожидаемся: при выходе Explorer должен вернуть обычные обои
-            desktop.Invoke(() => _layer?.Dispose(), DispatcherPriority.Send, CancellationToken.None, TimeSpan.FromSeconds(2));
+            // Окна закрываем в их потоке и дожидаемся: при выходе Explorer должен вернуть обычные обои
+            desktop.Invoke(() => _screens.ForEach(s => s.Layer.Dispose()),
+                DispatcherPriority.Send, CancellationToken.None, TimeSpan.FromSeconds(2));
         }
         catch (Exception) { }
         desktop.InvokeShutdown();
     }
+
+    private sealed record ScreenView(string? Device, DesktopLyricsView View, DesktopLayer Layer);
 }

@@ -71,6 +71,13 @@ public sealed class MediaSessionService : IDisposable
     private MusicSource _source;
     private string? _coverKey;
     private string? _catalogKey;
+    // Обложка взята из каталога, а не от плеера
+    private bool _catalogCover;
+    // Картинка, которую прислал плеер для текущего и прошлого трека, и альбом прошлого трека
+    private byte[]? _thumb, _previousThumb;
+    private string? _thumbKey, _thumbAlbum, _previousAlbum;
+    // Картинку отложили как оставшуюся от прошлого трека: пригодится, если в каталогах ничего не найдётся
+    private byte[]? _suspectCover;
     private int _refreshVersion;
     private bool _acceptAnyTimeline = true;
     private bool _disposed;
@@ -403,6 +410,29 @@ public sealed class MediaSessionService : IDisposable
 
         var key = $"{artist}\n{title}\n{album}";
         bool newTrack = key != _coverKey;
+        if (key != _thumbKey)
+        {
+            // Не по newTrack: прерванное обновление уже могло записать картинку нового трека
+            _thumbKey = key;
+            _previousThumb = _thumb;
+            _previousAlbum = _thumbAlbum;
+            _thumbAlbum = album;
+            _thumb = null;
+            _suspectCover = null;
+        }
+        // Браузер меняет картинку в сеансе позже названия: сначала у новой песни висит картинка прошлой вкладки
+        // (кадр ролика YouTube у трека Яндекс Музыки). Поэтому у браузера картинку перечитываем при каждом
+        // событии и подхватываем, как только она сменилась.
+        byte[]? raw = null;
+        bool thumbChanged = false;
+        if (browser || newTrack || sourceChanged || (Cover == null && thumbnail != null))
+        {
+            raw = thumbnail == null ? null : await ReadAsync(thumbnail);
+            if (_disposed || session != _session || version != _refreshVersion)
+                return;
+            thumbChanged = !SameBytes(raw, _thumb);
+            _thumb = raw;
+        }
         if (_source == MusicSource.YouTube)
         {
             // Браузер присылает логотип сайта или кадр ролика — на обоях это выглядит как ошибка,
@@ -411,20 +441,34 @@ public sealed class MediaSessionService : IDisposable
             {
                 _coverKey = key;
                 Cover = null;
+                _catalogCover = false;
             }
         }
-        else if (newTrack || sourceChanged || (Cover == null && thumbnail != null))
+        else if (newTrack || sourceChanged || thumbChanged)
         {
-            // Плеер иногда присылает обложку чуть позже названия
-            var cover = thumbnail == null ? null : await ReadAsync(thumbnail);
+            var cover = raw;
             // Если сайт не дал обложку (так бывает у Яндекс Музыки в Chrome), браузер подставляет свой значок
             if (cover != null && browser && IsAppIcon(cover))
                 cover = null;
-            if (_disposed || session != _session || version != _refreshVersion)
-                return;
+            // Картинка прошлого трека с другого альбома — браузер ещё не успел сменить её
+            if (cover != null && browser && newTrack && IsLeftover(cover, _previousThumb, _previousAlbum, album))
+            {
+                _suspectCover = cover;
+                cover = null;
+            }
             _coverKey = key;
-            if (cover != null || newTrack || sourceChanged)
+            if (newTrack || sourceChanged)
+            {
                 Cover = cover;
+                _catalogCover = false;
+            }
+            // Плеер прислал обложку позже названия. Чёткую из каталога мелкой от браузера не заменяем.
+            else if (cover != null && !(_catalogCover && PixelSize(cover) < SharpCover))
+            {
+                Cover = cover;
+                _catalogCover = false;
+                _catalogKey = null;
+            }
         }
 
         if (playing != IsPlaying)
@@ -465,6 +509,13 @@ public sealed class MediaSessionService : IDisposable
             if (art != null || _source == MusicSource.YouTube)
             {
                 Cover = art;
+                _catalogCover = art != null;
+                Changed?.Invoke();
+            }
+            else if (Cover == null && _suspectCover != null)
+            {
+                // В каталогах нет, а браузер так и не сменил картинку — значит, она всё-таки этого трека
+                Cover = _suspectCover;
                 Changed?.Invoke();
             }
         }
@@ -728,6 +779,16 @@ public sealed class MediaSessionService : IDisposable
             return false;
         }
     }
+
+    /// <summary>
+    /// Картинка осталась от прошлого трека: те же байты, а альбом другой. У треков одного альбома
+    /// обложка общая, поэтому одинаковая картинка там — норма.
+    /// </summary>
+    internal static bool IsLeftover(byte[] cover, byte[]? previousThumb, string? previousAlbum, string? album) =>
+        previousAlbum != album && SameBytes(cover, previousThumb);
+
+    private static bool SameBytes(byte[]? a, byte[]? b) =>
+        a == null ? b == null : b != null && a.AsSpan().SequenceEqual(b);
 
     /// <summary>Обложка меньше этого размера на обоях выглядит мыльной.</summary>
     private const int SharpCover = 400;

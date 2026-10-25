@@ -54,6 +54,7 @@ internal static class CoverArtService
         }
 
         byte[]? art = null;
+        bool failed = false;
         try
         {
             art = await FromDeezerAsync(title, artist, ct);
@@ -61,6 +62,7 @@ internal static class CoverArtService
         catch (Exception)
         {
             // Deezer не ответил — пробуем Apple Music.
+            failed = true;
         }
         if (art == null && !ct.IsCancellationRequested)
         {
@@ -71,11 +73,13 @@ internal static class CoverArtService
             catch (Exception)
             {
                 // Обложки не будет: покажем то, что дал браузер.
+                failed = true;
             }
         }
 
-        // Прерванный по таймауту поиск не запоминаем: в следующий раз сети может стать лучше.
-        if (art != null || !ct.IsCancellationRequested)
+        // Прерванный поиск и отказ сервиса не запоминаем: за часы прослушивания каталоги порой упираются
+        // в лимит запросов, и «не нашлось» тогда навсегда закрыло бы обои для этих песен.
+        if (art != null || (!ct.IsCancellationRequested && !failed))
         {
             lock (Cache)
             {
@@ -99,6 +103,9 @@ internal static class CoverArtService
         var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
         var json = await Http.GetStringAsync($"https://api.deezer.com/search?q={query}&limit=6", ct);
         using var doc = JsonDocument.Parse(json);
+        // Превышение лимита Deezer отдаёт с кодом 200 и полем error
+        if (doc.RootElement.TryGetProperty("error", out _))
+            throw new HttpRequestException("Deezer: " + doc.RootElement.GetProperty("error"));
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             return null;
 

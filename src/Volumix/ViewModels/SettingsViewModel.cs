@@ -135,6 +135,42 @@ public sealed class SettingsViewModel : ObservableObject
         }
     }
 
+    /// <summary>Мониторы на выбор. Список собирается при открытии настроек: мониторы могли подключить.</summary>
+    public IReadOnlyList<Option<string>> Screens
+    {
+        get
+        {
+            var list = new List<Option<string>>
+            {
+                new(AppSettings.AllScreens, "Все мониторы"),
+                new(AppSettings.PrimaryScreen, "Только основной"),
+            };
+            var screens = System.Windows.Forms.Screen.AllScreens;
+            for (int i = 0; i < screens.Length; i++)
+            {
+                var s = screens[i];
+                list.Add(new(s.DeviceName, $"Монитор {i + 1} — {s.Bounds.Width}×{s.Bounds.Height}{(s.Primary ? ", основной" : "")}"));
+            }
+            // Выбранный монитор сейчас отключён — оставляем его в списке, чтобы выбор не слетел
+            if (list.All(o => o.Value != S.DesktopScreen))
+                list.Add(new(S.DesktopScreen, "Отключённый монитор"));
+            return list;
+        }
+    }
+
+    public string DesktopScreen
+    {
+        get => S.DesktopScreen ?? AppSettings.AllScreens;
+        set
+        {
+            value ??= AppSettings.AllScreens;
+            if (S.DesktopScreen == value) return;
+            S.DesktopScreen = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
     public MusicSourceMode Source
     {
         get => S.Source;

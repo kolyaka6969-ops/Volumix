@@ -77,6 +77,7 @@ public partial class App : Application
         {
             MarqueeSpeed = SettingsVm.MarqueeSpeed,
             MarqueeFps = SettingsVm.MarqueeFps,
+            Screen = SettingsVm.DesktopScreen,
             Enabled = SettingsVm.DesktopLyrics,
         };
         SettingsVm.PropertyChanged += (_, args) =>
@@ -91,6 +92,9 @@ public partial class App : Application
                     break;
                 case nameof(SettingsViewModel.MarqueeFps):
                     _desktopLyrics.MarqueeFps = SettingsVm.MarqueeFps;
+                    break;
+                case nameof(SettingsViewModel.DesktopScreen):
+                    _desktopLyrics.Screen = SettingsVm.DesktopScreen;
                     break;
                 case nameof(SettingsViewModel.Source):
                     _media.Mode = SettingsVm.Source;

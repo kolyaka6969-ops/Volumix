@@ -519,7 +519,10 @@ public static class LyricsService
             result = found >= 0 ? (texts[found], found) : (anyFailed ? Lyrics.Error : Lyrics.NotFound, 0);
         }
 
-        if (result.Value.Lyrics.Status != LyricsStatus.Error)
+        // «Не нашлось», когда часть запросов к lrclib сорвалась, тоже не запоминаем: за долгий джем
+        // lrclib порой отвечает отказами, и песня иначе так и осталась бы без текста
+        var status = result.Value.Lyrics.Status;
+        if (status != LyricsStatus.Error && !(status == LyricsStatus.NotFound && results.Any(r => r == null)))
             lock (VideoCache)
             {
                 if (VideoCache.Count >= CacheLimit)

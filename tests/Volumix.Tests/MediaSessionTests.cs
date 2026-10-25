@@ -293,6 +293,34 @@ public class MediaSessionTests
         Assert.Equal(0, MediaSessionService.PixelSize(new byte[] { 1, 2, 3 }));
     }
 
+    [Fact]
+    public void RejectsCoverLeftFromPreviousVideo()
+    {
+        var frame = Png(System.Drawing.Color.DarkRed);
+        var copy = (byte[])frame.Clone();
+        // Ролик YouTube без альбома сменился треком Яндекс Музыки, а браузер ещё отдаёт кадр ролика
+        Assert.True(MediaSessionService.IsLeftover(copy, frame, null, "8 способов как бросить…"));
+        // Следующий трек того же альбома — обложка общая, это не ошибка
+        Assert.False(MediaSessionService.IsLeftover(copy, frame, "Альбом", "Альбом"));
+        // Картинка уже другая — браузер её сменил
+        Assert.False(MediaSessionService.IsLeftover(Png(System.Drawing.Color.Navy), frame, null, "Альбом"));
+        Assert.False(MediaSessionService.IsLeftover(copy, null, null, "Альбом"));
+    }
+
+    [Fact]
+    public void PicksScreensForDesktopLyrics()
+    {
+        var all = System.Windows.Forms.Screen.AllScreens;
+        Assert.Equal(all.Select(s => s.DeviceName), DesktopLyricsService.Devices(AppSettings.AllScreens));
+        Assert.Equal(new string?[] { null }, DesktopLyricsService.Devices(AppSettings.PrimaryScreen));
+        Assert.Equal(new string?[] { all[0].DeviceName }, DesktopLyricsService.Devices(all[0].DeviceName));
+        // Монитор отключили — показываем на основном
+        Assert.Equal(new string?[] { null }, DesktopLyricsService.Devices(@"\\.\DISPLAY99"));
+        var primary = System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+        Assert.Equal(primary, DesktopLayer.ScreenBounds(@"\\.\DISPLAY99"));
+        Assert.Equal(all[^1].Bounds, DesktopLayer.ScreenBounds(all[^1].DeviceName));
+    }
+
     private static byte[] Png(System.Drawing.Color background)
     {
         using var bmp = new System.Drawing.Bitmap(64, 64, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
