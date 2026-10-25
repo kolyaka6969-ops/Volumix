@@ -101,6 +101,25 @@ public class MediaSessionTests
         Assert.Equal("Кино", artist);
     }
 
+    [Theory]
+    [InlineData("ПОШЛАЯ МОЛЛИ –СУПЕРМАРКЕТ", "ПОШЛАЯ МОЛЛИ – СУПЕРМАРКЕТ")]
+    [InlineData("Кино- Группа крови", "Кино - Группа крови")]
+    [InlineData("Кино — Группа крови", "Кино — Группа крови")]
+    [InlineData("Jay-Z - Empire State Of Mind", "Jay-Z - Empire State Of Mind")]
+    [InlineData("Hip-Hop", "Hip-Hop")]
+    public void SpacesOneSidedDashes(string title, string expected) =>
+        Assert.Equal(expected, MediaSessionService.SpaceDashes(title));
+
+    /// <summary>Тире без пробела после него: раньше название не делилось, и песня не находилась.</summary>
+    [Fact]
+    public void ReadsTitleWithOneSidedDash()
+    {
+        var (title, artist, _) = MediaSessionService.CleanMetadata("ПОШЛАЯ МОЛЛИ –СУПЕРМАРКЕТ  [320 kbps]", "ХАРТ_hack", null,
+            MusicSource.YouTube);
+        var candidates = MediaSessionService.Candidates(title, artist).Take(4).ToList();
+        Assert.Contains(("СУПЕРМАРКЕТ", "ПОШЛАЯ МОЛЛИ"), candidates);
+    }
+
     [Fact]
     public void KeepsBrowserArtistWhenGiven()
     {

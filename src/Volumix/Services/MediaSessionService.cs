@@ -72,7 +72,9 @@ public sealed class MediaSessionService : IDisposable
     private static readonly Regex NoiseTail = new(
         @"\s*[+|/•–—-]\s*(?:текст(?:\s+песни)?|с\s+текстом|lyrics?|караоке|karaoke)\s*$", RegexOptions.IgnoreCase);
     // «starring» — так YouTube-каналы пишут гостя в клипах: «STORM starring Yung Lean»
-    private static readonly Regex FeatTail = new(@"\s+(?:ft|feat|featuring|starring)\.?\s.*$", RegexOptions.IgnoreCase);
+    // Тире с пробелом только с одной стороны
+    private static readonly Regex OneSidedDash = new(@"(?<=\S)\s+(?<d>[-–—])(?=\S)|(?<=\S)(?<d>[-–—])\s+(?=\S)");
+    private static readonly Regex FeatTail =new(@"\s+(?:ft|feat|featuring|starring)\.?\s.*$", RegexOptions.IgnoreCase);
 
     private readonly Dispatcher _dispatcher;
     private readonly BrowserMusicDetector _browser = new();
@@ -148,6 +150,10 @@ public sealed class MediaSessionService : IDisposable
     /// <summary>Позиция на момент <see cref="PositionTime"/>; во время игры к ней прибавляется прошедшее время.</summary>
     public TimeSpan Position { get; private set; }
     public DateTimeOffset PositionTime { get; private set; }
+
+    /// <summary>Ролик YouTube как он записан на YouTube и кадр из браузера — чтобы найти сам ролик.</summary>
+    internal (string Title, string? Channel, byte[]? Thumbnail)? Video =>
+        _source == MusicSource.YouTube && _videoTitle != null ? (_videoTitle, _videoChannel, _thumb) : null;
 
     public NowPlaying? NowPlaying => _session == null || Title == null ? null
         : new(Title, Artist, Album, Cover, IsPlaying, Position, PositionTime, Duration, _source,
@@ -573,6 +579,14 @@ public sealed class MediaSessionService : IDisposable
             (_source == MusicSource.YouTube || (browser && Cover == null) || (Cover != null && PixelSize(Cover) < SharpCover)))
         {
             var variants = Candidates(title, artist).Take(4).ToList();
+            // Песня из описания ролика точнее любого прочтения названия — ищем её первой
+            if (Video is var (videoName, videoChannel, videoThumb) &&
+                await YouTubeService.FindSongAsync(videoName, videoChannel, videoThumb) is { } song)
+            {
+                if (_disposed || session != _session || version != _refreshVersion)
+                    return;
+                variants.Insert(0, (song.Title, song.Artist));
+            }
             var (art, failed) = await CoverArtService.LookUpAsync(variants);
             if (_disposed || session != _session || version != _refreshVersion)
                 return;
@@ -588,7 +602,7 @@ public sealed class MediaSessionService : IDisposable
             if (art == null && !failed && _source == MusicSource.YouTube && _videoTitle is { } videoTitle && _thumb is { } thumb)
             {
                 var channel = _videoChannel;
-                art = await Task.Run(() => YouTubeService.FindCoverAsync(videoTitle, channel, thumb));
+                art = await YouTubeService.FindCoverAsync(videoTitle, channel, thumb);
                 if (_disposed || session != _session || version != _refreshVersion)
                     return;
                 frame = art != null;
@@ -620,6 +634,8 @@ public sealed class MediaSessionService : IDisposable
         string title, string? artist, string? album, MusicSource source)
     {
         title = WithoutSiteName(title);
+        if (source != MusicSource.Spotify)
+            title = SpaceDashes(title);
 
         if (source is MusicSource.YouTube or MusicSource.YouTubeMusic)
         {
@@ -670,6 +686,12 @@ public sealed class MediaSessionService : IDisposable
 
         return (title, string.IsNullOrWhiteSpace(artist) ? null : artist, album);
     }
+
+    /// <summary>
+    /// «ПОШЛАЯ МОЛЛИ –СУПЕРМАРКЕТ» → «ПОШЛАЯ МОЛЛИ – СУПЕРМАРКЕТ»: на YouTube пробел у тире часто забывают,
+    /// и название не делилось на исполнителя и песню. Тире без пробелов вовсе («Jay-Z», «Hip-Hop») не трогаем.
+    /// </summary>
+    internal static string SpaceDashes(string title) => OneSidedDash.Replace(title, m => $" {m.Groups["d"].Value} ");
 
     private static string WithoutSiteName(string title)
     {

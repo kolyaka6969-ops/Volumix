@@ -246,6 +246,17 @@ public sealed class DesktopLyricsService : IDisposable
             // Из YouTube приходят и клипы, и лекции, и влоги — на обои пускаем только то, что нашлось в базе текстов.
             // Название ролика редко совпадает с названием песни, поэтому ищутся сразу все варианты прочтения.
             var candidates = MediaSessionService.Candidates(track.Title, track.Artist).Take(4).ToList();
+            // YouTube сам пишет в описании ролика, какая в нём песня. Раз написал — это музыка, даже если
+            // текста и обложки нигде нет, и искать текст лучше по этим песне и исполнителю
+            YouTubeSong? song = null;
+            if (_media.Video is var (videoTitle, channel, thumbnail))
+            {
+                song = await YouTubeService.FindSongAsync(videoTitle, channel, thumbnail);
+                if (cts.IsCancellationRequested)
+                    return;
+                if (song != null)
+                    candidates.Insert(0, (song.Title, song.Artist));
+            }
             var (result, index) = await LyricsService.FindVideoAsync(candidates, track.Duration, cts.Token);
             if (cts.IsCancellationRequested)
                 return;
@@ -260,7 +271,11 @@ public sealed class DesktopLyricsService : IDisposable
                     return;
                 // Неофициальный клип или кавер: ни текста, ни обложки в каталогах, но по названию видно, что это музыка.
                 // На обоях будет кадр ролика
-                if (art != null || (!failed && IsMusicVideo(track.VideoTitle ?? track.Title)))
+                if (song != null)
+                {
+                    Confirm(track, (song.Title, song.Artist ?? track.Artist), failed ? Lyrics.Error : Lyrics.NotFound);
+                }
+                else if (art != null || (!failed && IsMusicVideo(track.VideoTitle ?? track.Title)))
                 {
                     Confirm(track, null, Lyrics.NotFound);
                 }
@@ -334,7 +349,7 @@ public sealed class DesktopLyricsService : IDisposable
     {
         "клип", "clip", "fan made", "fanmade", "fan video", "amv", "official video", "official music video", "music video", "official audio", "lyric video", "lyrics",
         "текст песни", "mv", "m/v", "cover", "кавер", "remix", "ремикс", "visualizer", "slowed", "sped up", "nightcore",
-        "премьера трека", "премьера песни",
+        "премьера трека", "премьера песни", "kbps",
     };
 
     /// <summary>Название ролика похоже на песню: «Исполнитель - Песня (Fan Made Clip)», «Песня [кавер]».</summary>

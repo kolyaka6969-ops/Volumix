@@ -5,28 +5,42 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Volumix.Services;
 
+/// <summary>Песня, которую YouTube указал в описании ролика (блок «Музыка»).</summary>
+public sealed record YouTubeSong(string Title, string? Artist, string? Album);
+
 /// <summary>
-/// Обложка ролика YouTube в полном размере — для неофициальных клипов, каверов и просто видео, которых нет
-/// в каталогах обложек. Браузер присылает кадр размером со спичечный коробок (150×83), а id ролика не сообщает,
-/// поэтому ролик ищем по названию и каналу и сверяем найденное с кадром из браузера.
+/// Сведения о ролике с самого YouTube. Браузер сообщает только название, канал и кадр размером со спичечный
+/// коробок (150×83), а id ролика — нет, поэтому ролик ищем по названию и каналу и сверяем с кадром из браузера.
+/// Отсюда берутся песня из описания ролика и кадр в полном размере — для клипов, которых нет в каталогах обложек.
 /// </summary>
 internal static class YouTubeService
 {
-    /// <summary>Сколько первых результатов поиска сверять с кадром из браузера.</summary>
-    private const int Candidates = 4;
+    /// <summary>Сколько первых результатов поиска рассматривать.</summary>
+    private const int Candidates = 6;
     /// <summary>Средняя разница цвета (0–255), при которой картинки ещё считаются одним кадром.</summary>
     private const double MaxDifference = 28;
     private const int CacheLimit = 100;
 
     private static readonly HttpClient Http = CreateClient();
-    private static readonly Dictionary<string, byte[]?> Cache = new();
-    private static readonly Regex VideoId = new(@"""videoId"":""([\w-]{11})""", RegexOptions.Compiled);
+    // Запросы, а не ответы: обои и поиск обложки спрашивают про один ролик одновременно — на YouTube идём один раз
+    private static readonly Dictionary<string, Task<string?>> Ids = new();
+    private static readonly Dictionary<string, Task<YouTubeSong?>> Songs = new();
+    private static readonly Dictionary<string, Task<byte[]?>> Covers = new();
+
+    private const string JsonText = @"""((?:[^""\\]|\\.)*)""";
+    private static readonly Regex SearchResult = new(@"""videoRenderer"":\{""videoId"":""([\w-]{11})""", RegexOptions.Compiled);
+    private static readonly Regex ResultTitle = new(@"""title"":\{""runs"":\[\{""text"":" + JsonText, RegexOptions.Compiled);
+    private static readonly Regex CardTitle = new(@"""title"":" + JsonText, RegexOptions.Compiled);
+    private static readonly Regex CardSubtitle = new(@"""subtitle"":" + JsonText, RegexOptions.Compiled);
+    private static readonly Regex CardAlbum = new(@"""secondarySubtitle"":\{""content"":" + JsonText, RegexOptions.Compiled);
+    private static readonly Regex Spaces = new(@"\s+", RegexOptions.Compiled);
 
     private static HttpClient CreateClient()
     {
@@ -40,63 +54,159 @@ internal static class YouTubeService
     }
 
     /// <summary>
+    /// Песня из описания ролика. YouTube сам опознаёт музыку в роликах и пишет её в описании блоком «Музыка» —
+    /// раз он там есть, это песня, даже если её нет в базах текстов и обложек. Никогда не бросает исключений.
+    /// </summary>
+    public static Task<YouTubeSong?> FindSongAsync(string title, string? channel, byte[]? thumbnail) =>
+        Cached(Songs, Key(title, channel), async () =>
+        {
+            var id = await FindVideoIdAsync(title, channel, thumbnail);
+            if (id == null)
+                return null;
+            var html = await Http.GetStringAsync("https://www.youtube.com/watch?v=" + id);
+            return ParseMusicSection(html);
+        });
+
+    /// <summary>
     /// Кадр ролика 1280×720 (или 480×360, если большого нет). null — ролик не нашёлся или кадр из браузера
     /// не похож ни на один найденный: так чужой клип не подставится. Никогда не бросает исключений.
     /// </summary>
-    public static async Task<byte[]?> FindCoverAsync(string title, string? channel, byte[] thumbnail, CancellationToken ct = default)
-    {
-        var key = $"{channel}\n{title}";
-        lock (Cache)
-            if (Cache.TryGetValue(key, out var cached))
-                return cached;
-
-        byte[]? cover;
-        try { cover = await SearchAsync(title, channel, thumbnail, ct); }
-        catch (Exception) { return null; } // нет сети, отмена, YouTube поменял страницу — в кэш не кладём
-
-        lock (Cache)
+    public static Task<byte[]?> FindCoverAsync(string title, string? channel, byte[] thumbnail) =>
+        Cached(Covers, Key(title, channel), async () =>
         {
-            if (Cache.Count >= CacheLimit)
-                Cache.Clear();
-            Cache[key] = cover;
-        }
-        return cover;
-    }
+            // Для обложки ролик обязан совпасть с кадром — одного названия мало
+            if (await FindVideoIdAsync(title, channel, thumbnail, needFrame: true) is not { } id)
+                return null;
+            // maxres есть не у всех роликов; hq — с чёрными полосами, но всё равно лучше крошечного
+            return await GetAsync($"https://i.ytimg.com/vi/{id}/maxresdefault.jpg")
+                   ?? await GetAsync($"https://i.ytimg.com/vi/{id}/hqdefault.jpg");
+        });
 
-    private static async Task<byte[]?> SearchAsync(string title, string? channel, byte[] thumbnail, CancellationToken ct)
-    {
-        using var reference = Fingerprint(thumbnail);
-        if (reference == null)
-            return null;
-
-        var query = Uri.EscapeDataString(channel == null ? title : $"{title} {channel}");
-        var html = await Http.GetStringAsync("https://www.youtube.com/results?search_query=" + query, ct);
-        var ids = VideoId.Matches(html).Select(m => m.Groups[1].Value).Distinct().Take(Candidates).ToList();
-
-        string? best = null;
-        double bestDifference = MaxDifference;
-        foreach (var id in ids)
+    /// <summary>
+    /// Ищет ролик в выдаче YouTube: если есть кадр из браузера — самый похожий на него, иначе первый с тем же
+    /// названием. Вместо кадра браузер иногда присылает значок сайта — тогда выручает название.
+    /// </summary>
+    private static Task<string?> FindVideoIdAsync(string title, string? channel, byte[]? thumbnail, bool needFrame = false) =>
+        Cached(Ids, Key(title, channel) + (needFrame ? "\nframe" : ""), async () =>
         {
-            var preview = await GetAsync($"https://i.ytimg.com/vi/{id}/mqdefault.jpg", ct);
-            using var candidate = preview == null ? null : Fingerprint(preview);
-            if (candidate == null)
+            var query = Uri.EscapeDataString(channel == null ? title : $"{title} {channel}");
+            var html = await Http.GetStringAsync("https://www.youtube.com/results?search_query=" + query);
+            var results = ParseSearch(html).Take(Candidates).ToList();
+
+            using var reference = thumbnail == null ? null : Fingerprint(thumbnail);
+            if (reference != null)
+            {
+                string? best = null;
+                double bestDifference = MaxDifference;
+                foreach (var (id, _) in results)
+                {
+                    var preview = await GetAsync($"https://i.ytimg.com/vi/{id}/mqdefault.jpg");
+                    using var candidate = preview == null ? null : Fingerprint(preview);
+                    if (candidate == null)
+                        continue;
+                    double difference = Difference(reference, candidate);
+                    if (difference < bestDifference)
+                        (best, bestDifference) = (id, difference);
+                }
+                if (best != null || needFrame)
+                    return best;
+            }
+            else if (needFrame)
+                return null;
+
+            var normalized = Normalize(title);
+            return results.FirstOrDefault(r => Normalize(r.Title) == normalized).Id;
+        });
+
+    /// <summary>Ролики из выдачи поиска: id и название.</summary>
+    internal static IEnumerable<(string Id, string Title)> ParseSearch(string html)
+    {
+        var seen = new HashSet<string>();
+        foreach (Match m in SearchResult.Matches(html))
+        {
+            var id = m.Groups[1].Value;
+            if (!seen.Add(id))
                 continue;
-            double difference = Difference(reference, candidate);
-            if (difference < bestDifference)
-                (best, bestDifference) = (id, difference);
+            // Название — первое после id, в пределах этого же результата
+            var title = ResultTitle.Match(html, m.Index, Math.Min(4000, html.Length - m.Index));
+            yield return (id, title.Success ? Unescape(title.Groups[1].Value) : "");
         }
-        if (best == null)
-            return null;
-
-        // maxres есть не у всех роликов; hq — с чёрными полосами, но всё равно лучше крошечного
-        return await GetAsync($"https://i.ytimg.com/vi/{best}/maxresdefault.jpg", ct)
-               ?? await GetAsync($"https://i.ytimg.com/vi/{best}/hqdefault.jpg", ct);
     }
 
-    private static async Task<byte[]?> GetAsync(string url, CancellationToken ct)
+    /// <summary>Первая песня из блока «Музыка» в описании ролика; null — блока нет.</summary>
+    internal static YouTubeSong? ParseMusicSection(string html)
     {
-        using var response = await Http.GetAsync(url, ct);
-        return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(ct) : null;
+        int start = 0;
+        while ((start = html.IndexOf("\"horizontalCardListRenderer\"", start, StringComparison.Ordinal)) >= 0)
+        {
+            int next = html.IndexOf("\"horizontalCardListRenderer\"", start + 1, StringComparison.Ordinal);
+            var section = html[start..(next < 0 ? Math.Min(html.Length, start + 20000) : next)];
+            start++;
+            // Такие же карточки бывают у мест, людей и игр — у музыки значок MUSIC
+            if (!section.Contains("\"iconName\":\"MUSIC\"", StringComparison.Ordinal))
+                continue;
+            int card = section.IndexOf("\"videoAttributeViewModel\"", StringComparison.Ordinal);
+            if (card < 0)
+                continue;
+            var rest = section[card..];
+            var title = CardTitle.Match(rest);
+            if (!title.Success)
+                continue;
+            var artist = CardSubtitle.Match(rest);
+            var album = CardAlbum.Match(rest);
+            var name = Unescape(title.Groups[1].Value).Trim();
+            if (name.Length == 0)
+                continue;
+            return new YouTubeSong(name,
+                artist.Success && Unescape(artist.Groups[1].Value).Trim() is { Length: > 0 } a ? a : null,
+                album.Success && Unescape(album.Groups[1].Value).Trim() is { Length: > 0 } b ? b : null);
+        }
+        return null;
+    }
+
+    private static string Unescape(string json)
+    {
+        try { return JsonSerializer.Deserialize<string>("\"" + json + "\"") ?? json; }
+        catch (JsonException) { return json; }
+    }
+
+    private static string Key(string title, string? channel) => $"{channel}\n{title}";
+
+    private static string Normalize(string s) => Spaces.Replace(s.Trim().ToLowerInvariant(), " ");
+
+    /// <summary>Один запрос на ключ. Ошибку (нет сети, YouTube поменял страницу) не запоминаем — спросим ещё раз.</summary>
+    private static Task<T?> Cached<T>(Dictionary<string, Task<T?>> cache, string key, Func<Task<T?>> load) where T : class
+    {
+        lock (cache)
+        {
+            if (cache.TryGetValue(key, out var cached))
+                return cached;
+            if (cache.Count >= CacheLimit)
+                cache.Clear();
+            var task = Run();
+            cache[key] = task;
+            return task;
+        }
+
+        async Task<T?> Run()
+        {
+            try
+            {
+                return await Task.Run(load);
+            }
+            catch (Exception)
+            {
+                lock (cache)
+                    cache.Remove(key);
+                return null;
+            }
+        }
+    }
+
+    private static async Task<byte[]?> GetAsync(string url)
+    {
+        using var response = await Http.GetAsync(url);
+        return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync() : null;
     }
 
     /// <summary>Картинка, ужатая до 16×9: для сравнения кадров хватает с запасом.</summary>
