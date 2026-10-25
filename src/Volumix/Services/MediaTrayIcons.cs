@@ -11,7 +11,7 @@ using Forms = System.Windows.Forms;
 namespace Volumix.Services;
 
 /// <summary>
-/// Три значка в трее — «предыдущий», «пауза/play», «следующий» — для Spotify или вкладки браузера.
+/// Три значка в трее — «предыдущий», «пауза/play», «следующий» — для песни из Spotify или Яндекс Музыки.
 /// Значки создаются один раз и только прячутся: Windows запоминает видимость значка по его номеру,
 /// а новый номер снова отправил бы его в скрытые.
 /// </summary>
@@ -32,7 +32,7 @@ public sealed class MediaTrayIcons : IDisposable
         [GlyphPause] = "\uE769",
     };
 
-    private readonly SpotifyService _spotify;
+    private readonly MediaSessionService _media;
     private readonly Dispatcher _dispatcher;
     private readonly Forms.NotifyIcon _previous;
     private readonly Forms.NotifyIcon _playPause;
@@ -41,15 +41,15 @@ public sealed class MediaTrayIcons : IDisposable
     private bool _enabled;
     private bool _shown;
 
-    public MediaTrayIcons(SpotifyService spotify, Dispatcher dispatcher, Action showMenu)
+    public MediaTrayIcons(MediaSessionService media, Dispatcher dispatcher, Action showMenu)
     {
-        _spotify = spotify;
+        _media = media;
         _dispatcher = dispatcher;
 
         // Порядок создания не менять: Windows помнит, показан ли значок на панели, по его номеру
-        _previous = Create("Предыдущий трек", _spotify.Previous);
-        _playPause = Create("Плеер", _spotify.TogglePlayPause);
-        _next = Create("Следующий трек", _spotify.Next);
+        _previous = Create("Плеер: предыдущий трек", _media.Previous);
+        _playPause = Create("Плеер", _media.TogglePlayPause);
+        _next = Create("Плеер: следующий трек", _media.Next);
 
         Forms.NotifyIcon Create(string text, Action click)
         {
@@ -64,7 +64,7 @@ public sealed class MediaTrayIcons : IDisposable
 
         RenderIcons();
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
-        _spotify.Changed += Update;
+        _media.Changed += Update;
     }
 
     public bool Enabled
@@ -75,13 +75,22 @@ public sealed class MediaTrayIcons : IDisposable
 
     private void Update()
     {
-        bool show = _enabled && _spotify.IsAvailable;
+        bool show = _enabled && _media.IsAvailable;
 
-        _playPause.Icon = _icons[_spotify.IsPlaying ? GlyphPause : GlyphPlay];
-        var track = _spotify.Title == null ? "Плеер"
-            : _spotify.Artist == null ? _spotify.Title
-            : $"{_spotify.Artist} — {_spotify.Title}";
-        _playPause.Text = Trim($"{(_spotify.IsPlaying ? "Пауза" : "Играть")}\n{track}");
+        _playPause.Icon = _icons[_media.IsPlaying ? GlyphPause : GlyphPlay];
+        var player = _media.Source switch
+        {
+            MusicSource.Spotify => "Spotify",
+            MusicSource.YandexMusic => "Яндекс Музыка",
+            _ => "Плеер",
+        };
+        // Ролик YouTube подписан так же, как на самом YouTube
+        var now = _media.NowPlaying;
+        var track = now == null ? player
+            : now.ShownTitle != null ? now.ShownTitle
+            : now.Artist == null ? now.Title
+            : $"{now.Artist} — {now.Title}";
+        _playPause.Text = Trim($"{(_media.IsPlaying ? "Пауза" : "Играть")}\n{track}");
 
         if (show == _shown)
             return;
@@ -113,7 +122,7 @@ public sealed class MediaTrayIcons : IDisposable
 
         _previous.Icon = _icons[GlyphPrevious];
         _next.Icon = _icons[GlyphNext];
-        _playPause.Icon = _icons[_spotify.IsPlaying ? GlyphPause : GlyphPlay];
+        _playPause.Icon = _icons[_media.IsPlaying ? GlyphPause : GlyphPlay];
         foreach (var icon in old)
             icon.Dispose();
     }
@@ -177,7 +186,7 @@ public sealed class MediaTrayIcons : IDisposable
     public void Dispose()
     {
         SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
-        _spotify.Changed -= Update;
+        _media.Changed -= Update;
         foreach (var icon in new[] { _previous, _playPause, _next })
         {
             icon.Visible = false;

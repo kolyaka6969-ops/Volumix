@@ -11,6 +11,9 @@ using Volumix.Services;
 
 namespace Volumix.Views;
 
+/// <summary>Кнопки плеера на обоях.</summary>
+public enum DesktopControl { Previous, PlayPause, Next, Seek }
+
 /// <summary>Песня и её текст во весь экран — то, что показывается на рабочем столе вместо обоев.</summary>
 public partial class DesktopLyricsView : UserControl
 {
@@ -33,10 +36,18 @@ public partial class DesktopLyricsView : UserControl
     private Lyrics _lyrics = Lyrics.Loading;
     private int _current = int.MinValue;
     private bool _jump;
+    private readonly Marquee _titleMarquee;
+    private readonly Marquee _artistMarquee;
+    // Доля трека под мышью, пока тянут полосу прогресса; null — полоса показывает настоящую позицию
+    private double? _scrub;
+    // Полосу отпустили: до ответа плеера держим её там, где отпустили, иначе она на миг отскочила бы назад
+    private DateTime _scrubHold;
 
     public DesktopLyricsView()
     {
         InitializeComponent();
+        _titleMarquee = new Marquee(TitleText, TitleShift);
+        _artistMarquee = new Marquee(ArtistText, ArtistShift);
         _timer.Tick += (_, _) => Tick();
         LinesCanvas.SizeChanged += (_, _) =>
         {
@@ -47,24 +58,145 @@ public partial class DesktopLyricsView : UserControl
         };
     }
 
+    /// <summary>Кнопки под полосой прогресса.</summary>
+    public bool ControlsVisible
+    {
+        get => Controls.Visibility == Visibility.Visible;
+        set
+        {
+            Controls.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            if (!value)
+                SetPointer(null, false, 0);
+        }
+    }
+
+    /// <summary>
+    /// Кнопки в физических пикселях экрана, как их видит хук мыши. Окно лежит под значками рабочего стола
+    /// и щелчков само не получает — их ловит DesktopPointer.
+    /// </summary>
+    internal List<(System.Drawing.Rectangle Bounds, DesktopControl Control)> ControlBounds()
+    {
+        var list = new List<(System.Drawing.Rectangle, DesktopControl)>();
+        if (!ControlsVisible || !IsVisible || PresentationSource.FromVisual(this) == null)
+            return list;
+        try
+        {
+            list.Add((ScreenBounds(ProgressArea), DesktopControl.Seek));
+            list.Add((ScreenBounds(PreviousButton), DesktopControl.Previous));
+            list.Add((ScreenBounds(PlayButton), DesktopControl.PlayPause));
+            list.Add((ScreenBounds(NextButton), DesktopControl.Next));
+        }
+        catch (InvalidOperationException)
+        {
+            list.Clear(); // окно как раз пересоздаётся
+        }
+        return list;
+    }
+
+    private static System.Drawing.Rectangle ScreenBounds(FrameworkElement element)
+    {
+        var a = element.PointToScreen(new Point(0, 0));
+        var b = element.PointToScreen(new Point(element.ActualWidth, element.ActualHeight));
+        return System.Drawing.Rectangle.FromLTRB((int)Math.Round(Math.Min(a.X, b.X)), (int)Math.Round(Math.Min(a.Y, b.Y)),
+            (int)Math.Round(Math.Max(a.X, b.X)), (int)Math.Round(Math.Max(a.Y, b.Y)));
+    }
+
+    /// <summary>
+    /// Подсветка кнопки под мышью; pressed — кнопка зажата. Над полосой прогресса виден кружок,
+    /// а пока её тянут, полоса и время показывают место под мышью (fraction — доля трека).
+    /// </summary>
+    internal void SetPointer(DesktopControl? control, bool pressed, double fraction)
+    {
+        ProgressKnob.Visibility = control == DesktopControl.Seek ? Visibility.Visible : Visibility.Collapsed;
+        double? scrub = control == DesktopControl.Seek && pressed ? Math.Clamp(fraction, 0, 1) : null;
+        if (scrub != _scrub)
+        {
+            _scrub = scrub;
+            if (scrub is { } f && _track is { } track)
+            {
+                ShowProgress(f);
+                ElapsedText.Text = Format(track.Duration * f);
+            }
+            else
+            {
+                // Отпустили. Новую позицию пришлёт ShowTrack, а если перемотка не вышла — через секунду вернёмся к настоящей
+                _scrubHold = DateTime.UtcNow.AddSeconds(1);
+                Tick();
+            }
+        }
+        else if (_track != null)
+            ShowProgress(ProgressScale.ScaleX); // кружок появился — ставим его на конец полосы
+
+        HighlightButton(PreviousButton, control == DesktopControl.Previous, pressed, dim: true);
+        HighlightButton(PlayButton, control == DesktopControl.PlayPause, pressed, dim: false);
+        HighlightButton(NextButton, control == DesktopControl.Next, pressed, dim: true);
+    }
+
+    private static void HighlightButton(FrameworkElement button, bool hover, bool pressed, bool dim)
+    {
+        double scale = hover ? (pressed ? 0.94 : 1.06) : 1;
+        if (button.RenderTransform is ScaleTransform t)
+            t.ScaleX = t.ScaleY = scale;
+        if (dim)
+            button.Opacity = hover ? 1 : 0.75;
+    }
+
+    /// <summary>Скорость бегущей строки названия и исполнителя, точек макета 1920×1080 в секунду.</summary>
+    public double MarqueeSpeed
+    {
+        get => _titleMarquee.Speed;
+        set
+        {
+            _titleMarquee.Speed = value;
+            _artistMarquee.Speed = value;
+        }
+    }
+
+    /// <summary>Кадров в секунду у бегущей строки.</summary>
+    public int MarqueeFps
+    {
+        get => _titleMarquee.Fps;
+        set
+        {
+            _titleMarquee.Fps = value;
+            _artistMarquee.Fps = value;
+        }
+    }
+
     public void ShowTrack(NowPlaying track)
     {
         var old = _track;
         _track = track;
+        _scrubHold = default;
         if (old?.Key != track.Key)
         {
-            TitleText.Text = track.Title;
-            ArtistText.Text = track.Artist ?? "";
+            _scrub = null; // тянули полосу прошлого трека
+            TitleText.Text = track.ShownTitle ?? track.Title;
+            ArtistText.Text = track.ShownArtist ?? track.Artist ?? "";
             AlbumText.Text = track.Album != null && track.Album != track.Title ? track.Album : "";
             ShowLyrics(track.Key, Lyrics.Loading);
             Page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(600)));
+            _titleMarquee.Restart();
+            _artistMarquee.Restart();
         }
+        _titleMarquee.Running = true;
+        _artistMarquee.Running = true;
         if (old == null || !ReferenceEquals(old.Cover, track.Cover))
             SetCover(track.Cover);
-        PauseGlyph.Visibility = track.IsPlaying ? Visibility.Collapsed : Visibility.Visible;
-        DurationText.Text = Format(track.Duration);
+        PlayGlyph.Text = track.IsPlaying ? "" : "";
+        // Треугольник «играть» визуально левее середины, у паузы сдвиг не нужен
+        PlayGlyph.Margin = new Thickness(track.IsPlaying ? 0 : 3, 0, 0, 0);
+        // Длительности нет у заглушки и у прямых эфиров — время тогда не показываем
+        DurationText.Text = track.Duration > TimeSpan.Zero ? Format(track.Duration) : "";
         Tick();
     }
+
+    /// <summary>
+    /// Заглушка между треками: следующий ролик YouTube ещё проверяется, а мигать рабочим столом не хочется.
+    /// Без обложки и длительности: «Загрузка…», а справа «Ищу текст песни…».
+    /// </summary>
+    public void ShowPlaceholder() =>
+        ShowTrack(new NowPlaying("Загрузка…", null, null, null, true, TimeSpan.Zero, DateTimeOffset.Now, TimeSpan.Zero));
 
     public void ShowLyrics(string trackKey, Lyrics lyrics)
     {
@@ -110,7 +242,151 @@ public partial class DesktopLyricsView : UserControl
     }
 
     /// <summary>Окно скрыто — ничего не пересчитываем.</summary>
-    public void Stop() => _timer.Stop();
+    public void Stop()
+    {
+        _timer.Stop();
+        _titleMarquee.Running = false;
+        _artistMarquee.Running = false;
+    }
+
+    /// <summary>
+    /// Бегущая строка, как в Spotify: длинный текст стоит, уезжает влево до конца, стоит и возвращается.
+    /// В паузах анимации нет (их отсчитывает таймер) — WPF не перерисовывает обои зря.
+    /// </summary>
+    private sealed class Marquee
+    {
+        private static readonly TimeSpan StartPause = TimeSpan.FromSeconds(2.5);
+        private static readonly TimeSpan EndPause = TimeSpan.FromSeconds(1.5);
+
+        private readonly FrameworkElement _text;
+        private readonly TranslateTransform _shift;
+        private readonly DispatcherTimer _pause = new();
+        private bool _running;
+        private bool _forward;
+        private double _overflow;
+        /// <summary>
+        /// Снятая анимация всё равно присылает Completed, когда доходит до конца. Без счётчика прокрутка
+        /// прежнего длинного названия «оживала» у нового короткого и прижимала его к правому краю.
+        /// </summary>
+        private int _generation;
+        private double _speed = AppSettings.DefaultMarqueeSpeed;
+        private bool _moving;
+        private int _fps = AppSettings.DefaultMarqueeFps;
+
+        /// <summary>Кадров в секунду. Меняется и посреди прокрутки — с текущего места.</summary>
+        public int Fps
+        {
+            get => _fps;
+            set
+            {
+                value = Math.Clamp(value, AppSettings.MinMarqueeFps, AppSettings.MaxMarqueeFps);
+                if (_fps == value)
+                    return;
+                _fps = value;
+                if (_moving)
+                {
+                    _generation++;
+                    Scroll();
+                }
+            }
+        }
+
+        /// <summary>Скорость в точках макета 1920×1080 в секунду. Меняется и посреди прокрутки — с текущего места.</summary>
+        public double Speed
+        {
+            get => _speed;
+            set
+            {
+                value = Math.Clamp(value, AppSettings.MinMarqueeSpeed, AppSettings.MaxMarqueeSpeed);
+                if (_speed == value)
+                    return;
+                _speed = value;
+                if (_moving)
+                {
+                    _generation++; // Completed прежней анимации больше не наш
+                    Scroll();
+                }
+            }
+        }
+
+        public Marquee(FrameworkElement text, TranslateTransform shift)
+        {
+            _text = text;
+            _shift = shift;
+            // Обрезаем только по бокам: хвосты «y», «g», «р» выходят ниже строки и не должны срезаться
+            if (text.Parent is FrameworkElement box)
+            {
+                box.ClipToBounds = false;
+                box.Clip = new RectangleGeometry(new Rect(0, -box.Height, box.Width, box.Height * 3));
+            }
+            _text.SizeChanged += (_, _) => Restart();
+            _pause.Tick += (_, _) =>
+            {
+                _pause.Stop();
+                Scroll();
+            };
+        }
+
+        public bool Running
+        {
+            set
+            {
+                if (_running == value)
+                    return;
+                _running = value;
+                Restart();
+            }
+        }
+
+        /// <summary>Новый текст: снова с начала строки.</summary>
+        public void Restart()
+        {
+            _pause.Stop();
+            _generation++;
+            _moving = false;
+            _shift.BeginAnimation(TranslateTransform.XProperty, null);
+            _shift.X = 0;
+            _forward = true;
+            double width = (_text.Parent as FrameworkElement)?.ActualWidth ?? 0;
+            _overflow = width > 0 ? _text.ActualWidth - width : 0;
+            if (_running && _overflow > 1)
+                Wait(StartPause);
+        }
+
+        private void Wait(TimeSpan delay)
+        {
+            _pause.Interval = delay;
+            _pause.Start();
+        }
+
+        private void Scroll()
+        {
+            // Помещается целиком — стоит на месте
+            if (!_running || _overflow <= 1)
+                return;
+            int generation = _generation;
+            double target = _forward ? -_overflow : 0;
+            // Путь считается от текущего места: при смене скорости посреди прокрутки остаётся только хвост
+            double distance = Math.Abs(target - _shift.X);
+            var animation = new DoubleAnimation(target, TimeSpan.FromSeconds(Math.Max(0.5, distance / _speed)))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            };
+            // Частота из настроек (по умолчанию 60: при 30 медленная строка заметно дёргалась).
+            // Анимация идёт только в пути, в паузах кадров нет
+            Timeline.SetDesiredFrameRate(animation, _fps);
+            animation.Completed += (_, _) =>
+            {
+                if (!_running || generation != _generation)
+                    return;
+                _moving = false;
+                _forward = !_forward;
+                Wait(_forward ? StartPause : EndPause);
+            };
+            _moving = true;
+            _shift.BeginAnimation(TranslateTransform.XProperty, animation);
+        }
+    }
 
     private void Tick()
     {
@@ -119,8 +395,11 @@ public partial class DesktopLyricsView : UserControl
             return;
 
         var pos = track.PositionAt(DateTimeOffset.Now);
-        ElapsedText.Text = Format(pos);
-        ProgressScale.ScaleX = track.Duration > TimeSpan.Zero ? Math.Clamp(pos / track.Duration, 0, 1) : 0;
+        if (_scrub == null && DateTime.UtcNow >= _scrubHold)
+        {
+            ElapsedText.Text = track.Duration > TimeSpan.Zero ? Format(pos) : "";
+            ShowProgress(track.Duration > TimeSpan.Zero ? Math.Clamp(pos / track.Duration, 0, 1) : 0);
+        }
 
         // Просыпаемся к следующей секунде на часах или к следующей строке — что раньше
         var next = TimeSpan.FromMilliseconds(1000 - pos.Milliseconds + 15);
@@ -209,19 +488,19 @@ public partial class DesktopLyricsView : UserControl
     /// </summary>
     private void UpdateBigCover()
     {
-        bool big = _track is { IsVideo: true } && _cover != null && _lyrics.Status is LyricsStatus.NotFound or LyricsStatus.Error;
+        bool big = _track is { Source: MusicSource.YouTube } && _cover != null &&
+                   _lyrics.Status is LyricsStatus.NotFound or LyricsStatus.Error;
         BigCover.Visibility = big ? Visibility.Visible : Visibility.Collapsed;
         CoverBox.Visibility = big ? Visibility.Collapsed : Visibility.Visible;
-        if (big)
-        {
-            Status.Visibility = Visibility.Collapsed;
-            double aspect = Aspect(_cover!);
-            double width = BigCoverWidth, height = width / aspect;
-            if (height > BigCoverHeight)
-                (width, height) = (BigCoverHeight * aspect, BigCoverHeight);
-            BigCover.Width = width;
-            BigCover.Height = height;
-        }
+        if (!big)
+            return;
+        Status.Visibility = Visibility.Collapsed;
+        double aspect = Aspect(_cover!);
+        double width = BigCoverWidth, height = width / aspect;
+        if (height > BigCoverHeight)
+            (width, height) = (BigCoverHeight * aspect, BigCoverHeight);
+        BigCover.Width = width;
+        BigCover.Height = height;
     }
 
     /// <summary>Пропорции обложки: кадр из клипа шире квадрата, но не шире 16:9.</summary>
@@ -275,6 +554,12 @@ public partial class DesktopLyricsView : UserControl
         {
             return null; // битая или незнакомая картинка — останется заглушка
         }
+    }
+
+    private void ShowProgress(double fraction)
+    {
+        ProgressScale.ScaleX = fraction;
+        KnobShift.X = fraction * ProgressArea.ActualWidth - ProgressKnob.Width / 2;
     }
 
     private static string Format(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";

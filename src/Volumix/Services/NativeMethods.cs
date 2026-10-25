@@ -112,6 +112,19 @@ internal static class NativeMethods
     public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    public static string GetWindowTitle(IntPtr hWnd)
+    {
+        var sb = new StringBuilder(512);
+        int length = GetWindowText(hWnd, sb, sb.Capacity);
+        return length <= 0 ? string.Empty : sb.ToString(0, length);
+    }
+
+    [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
 
     [DllImport("user32.dll")]
@@ -137,6 +150,50 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern int SetThreadDpiHostingBehavior(int behavior);
+
+    // ---------- Мышь над обоями (DesktopPointer) ----------
+
+    public const int WH_MOUSE_LL = 14;
+    public const int WM_QUIT = 0x0012;
+    public const int WM_MOUSEMOVE = 0x0200;
+    public const int WM_LBUTTONDOWN = 0x0201;
+    public const int WM_LBUTTONUP = 0x0202;
+    public const uint GA_ROOT = 2;
+
+    public delegate IntPtr LowLevelMouseProc(int code, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSLLHOOKSTRUCT { public POINT Pt; public uint MouseData, Flags, Time; public IntPtr ExtraInfo; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG { public IntPtr Hwnd; public uint Message; public IntPtr WParam, LParam; public uint Time; public POINT Pt; }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc proc, IntPtr module, uint threadId);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetModuleHandle(string? name);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostThreadMessage(uint threadId, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder name, int count);
 }
 
 /// <summary>Недокументированный, но стабильный с Vista интерфейс для смены устройства по умолчанию.</summary>

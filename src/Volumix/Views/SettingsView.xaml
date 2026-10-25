@@ -51,10 +51,27 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE8D6;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Источник песни" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Браузер опознаётся по заголовку вкладки: Яндекс Музыка или YouTube. Если песня играет, а источника не видно — выберите его вручную" TextWrapping="Wrap" />
+                </StackPanel>
+                <ComboBox Grid.Column="2" Width="280" ItemsSource="{x:Static vm:SettingsViewModel.Sources}"
+                          DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding Source}" />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
                 <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE768;" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Style="{StaticResource Body}" Text="Кнопки плеера в трее" />
-                    <TextBlock Style="{StaticResource Caption}" Text="Назад, пауза и вперёд рядом с часами, пока играет Spotify или браузер (Chrome, Edge, Яндекс). Если они под стрелкой ^ — перетащите их на панель задач" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Назад, пауза и вперёд рядом с часами, пока играет Spotify, Яндекс Музыка или YouTube. Если они под стрелкой ^ — перетащите их на панель задач" TextWrapping="Wrap" />
                 </StackPanel>
                 <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding MediaButtons}" OnContent="Вкл." OffContent="Выкл." />
             </Grid>
@@ -71,10 +88,89 @@
                 <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE8D6;" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Style="{StaticResource Body}" Text="Песня и текст на рабочем столе" />
-                    <TextBlock Style="{StaticResource Caption}" Text="Пока играет Spotify или браузер, вместо обоев — обложка и текст песни, строки подсвечиваются под музыку. Тексты берутся с lrclib.net, свои можно положить в папку файлами .lrc" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Пока играет песня, вместо обоев — обложка и текст, строки подсвечиваются под музыку. Работает со Spotify и Яндекс Музыкой (в том числе в браузере). Тексты берутся с lrclib.net, свои можно положить в папку файлами .lrc" TextWrapping="Wrap" />
                 </StackPanel>
                 <ui:Button Grid.Column="2" Margin="0,0,12,0" Content="Папка текстов" Click="OpenLyricsFolder_Click" />
                 <ui:ToggleSwitch Grid.Column="3" IsChecked="{Binding DesktopLyrics}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE7F4;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Мониторы" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="На каких экранах показывать песню вместо обоев. Монитор, подключённый позже, подхватывается сам" />
+                </StackPanel>
+                <ComboBox Grid.Column="2" Width="280" ItemsSource="{Binding Screens}"
+                          DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding DesktopScreen}" />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE768;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Кнопки на рабочем столе" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="«Назад», «Играть / пауза» и «Вперёд» под полосой прогресса, как в Spotify. Нажимаются прямо на рабочем столе, если над ними нет окон" />
+                </StackPanel>
+                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding DesktopControls}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="44" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE8E4;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Скорость бегущей строки" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="Как быстро уезжает длинное название песни на рабочем столе. По умолчанию 22" />
+                </StackPanel>
+                <Slider Grid.Column="2" Width="170" Minimum="5" Maximum="100" TickFrequency="1"
+                        IsSnapToTickEnabled="True" IsMoveToPointEnabled="True" VerticalAlignment="Center"
+                        Value="{Binding MarqueeSpeed}" />
+                <TextBlock Grid.Column="3" Style="{StaticResource Body}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                           Text="{Binding MarqueeSpeed}" />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="44" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE9D9;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Кадров в секунду у бегущей строки" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="Больше — плавнее, но выше частоты монитора не бывает. Кадры рисуются, только пока строка едет. По умолчанию 60" />
+                </StackPanel>
+                <Slider Grid.Column="2" Width="170" Minimum="15" Maximum="240" TickFrequency="5"
+                        IsSnapToTickEnabled="True" IsMoveToPointEnabled="True" VerticalAlignment="Center"
+                        Value="{Binding MarqueeFps}" />
+                <TextBlock Grid.Column="3" Style="{StaticResource Body}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                           Text="{Binding MarqueeFps}" />
             </Grid>
         </Border>
 
@@ -133,55 +229,6 @@
                 </StackPanel>
                 <ComboBox Grid.Column="2" Width="180" ItemsSource="{x:Static vm:SettingsViewModel.Themes}"
                           DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding Theme}" />
-            </Grid>
-        </Border>
-
-        <TextBlock Style="{StaticResource SectionHeader}" Text="Голосовое управление" />
-
-        <Border Style="{StaticResource Card}">
-            <Grid Style="{StaticResource RowGrid}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="40" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE720;" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                    <TextBlock Style="{StaticResource Body}" Text="Голосовые команды" />
-                    <TextBlock Style="{StaticResource Caption}" Text="{Binding VoiceStatus}" />
-                </StackPanel>
-                <ui:Button Grid.Column="2" Margin="0,0,12,0" Click="TryVoice_Click"
-                           IsEnabled="{Binding VoiceEnabled}" ToolTip="Сказать команду">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource Glyph}" FontSize="14" Text="&#xE720;" Margin="0,0,8,0" />
-                        <TextBlock Text="Сказать" />
-                    </StackPanel>
-                </ui:Button>
-                <ui:ToggleSwitch Grid.Column="3" IsChecked="{Binding VoiceEnabled}" OnContent="Вкл." OffContent="Выкл." />
-            </Grid>
-        </Border>
-
-        <Border Style="{StaticResource Card}">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="40" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" VerticalAlignment="Top"
-                           Margin="0,2,0,0" Text="&#xE8BD;" />
-                <StackPanel Grid.Column="1">
-                    <TextBlock Style="{StaticResource Body}" Text="Что можно сказать" Margin="0,0,0,6" />
-                    <TextBlock Style="{StaticResource Caption}" LineHeight="20">
-                        <Run FontWeight="SemiBold">Громкость:</Run> «громкость сорок», «спотифай на пятьдесят», «дискорд потише»,
-                        «хром громче на двадцать», «сделай это окно тише»<LineBreak />
-                        <Run FontWeight="SemiBold">Звук:</Run> «выключи звук», «заглуши телеграм», «включи звук в дискорде»<LineBreak />
-                        <Run FontWeight="SemiBold">Устройства:</Run> «переключи на наушники», «следующее устройство»<LineBreak />
-                        <Run FontWeight="SemiBold">Настройки:</Run> «тёмная тема», «включи автозапуск», «шаг громкости пять»,
-                        «выключи индикатор», «сворачивать в трей»<LineBreak />
-                        <Run FontWeight="SemiBold">Окна:</Run> «открой микшер», «открой настройки», «покажи горячие клавиши», «закрой»
-                    </TextBlock>
-                </StackPanel>
             </Grid>
         </Border>
 

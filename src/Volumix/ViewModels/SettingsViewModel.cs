@@ -38,6 +38,14 @@ public sealed class SettingsViewModel : ObservableObject
         new Option<ThemeMode>(ThemeMode.Dark, "Тёмная"),
     };
 
+    public static IReadOnlyList<Option<MusicSourceMode>> Sources { get; } = new[]
+    {
+        new Option<MusicSourceMode>(MusicSourceMode.Auto, "Spotify, Яндекс Музыка и YouTube"),
+        new Option<MusicSourceMode>(MusicSourceMode.Spotify, "Только Spotify"),
+        new Option<MusicSourceMode>(MusicSourceMode.YandexMusic, "Яндекс Музыка (и браузер)"),
+        new Option<MusicSourceMode>(MusicSourceMode.YouTube, "YouTube (и браузер)"),
+    };
+
     public string Version => "Версия " + (Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0");
 
     public bool Autostart
@@ -101,28 +109,78 @@ public sealed class SettingsViewModel : ObservableObject
         set { if (S.DesktopLyrics == value) return; S.DesktopLyrics = value; Save(); OnPropertyChanged(); }
     }
 
-    // ---------- Голосовое управление ----------
-
-    public bool VoiceEnabled
+    public bool DesktopControls
     {
-        get => S.VoiceEnabled;
-        set { if (S.VoiceEnabled == value) return; S.VoiceEnabled = value; Save(); OnPropertyChanged(); }
+        get => S.DesktopControls;
+        set { if (S.DesktopControls == value) return; S.DesktopControls = value; Save(); OnPropertyChanged(); }
     }
 
-    public string VoiceHotkeyText =>
-        S.Hotkeys.FirstOrDefault(h => h.Action == HotkeyAction.VoiceCommand && h.Key != Key.None) is { } h
-            ? HotkeyService.Format(h.Modifiers, h.Key)
-            : "не назначено";
-
-    public string VoiceStatus =>
-        VoiceService.FindModel() == null ? "Модель распознавания не найдена — переустановите Volumix"
-        : !VoiceService.HasMicrophone ? "Микрофон не найден"
-        : $"Нажмите {VoiceHotkeyText} или кнопку микрофона и скажите команду. Работает без интернета.";
-
-    public void RefreshVoiceStatus()
+    public int MarqueeSpeed
     {
-        OnPropertyChanged(nameof(VoiceStatus));
-        OnPropertyChanged(nameof(VoiceHotkeyText));
+        get => Math.Clamp(S.MarqueeSpeed, AppSettings.MinMarqueeSpeed, AppSettings.MaxMarqueeSpeed);
+        set
+        {
+            value = Math.Clamp(value, AppSettings.MinMarqueeSpeed, AppSettings.MaxMarqueeSpeed);
+            if (S.MarqueeSpeed == value) return;
+            S.MarqueeSpeed = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
+    public int MarqueeFps
+    {
+        get => Math.Clamp(S.MarqueeFps, AppSettings.MinMarqueeFps, AppSettings.MaxMarqueeFps);
+        set
+        {
+            value = Math.Clamp(value, AppSettings.MinMarqueeFps, AppSettings.MaxMarqueeFps);
+            if (S.MarqueeFps == value) return;
+            S.MarqueeFps = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Мониторы на выбор. Список собирается при открытии настроек: мониторы могли подключить.</summary>
+    public IReadOnlyList<Option<string>> Screens
+    {
+        get
+        {
+            var list = new List<Option<string>>
+            {
+                new(AppSettings.AllScreens, "Все мониторы"),
+                new(AppSettings.PrimaryScreen, "Только основной"),
+            };
+            var screens = System.Windows.Forms.Screen.AllScreens;
+            for (int i = 0; i < screens.Length; i++)
+            {
+                var s = screens[i];
+                list.Add(new(s.DeviceName, $"Монитор {i + 1} — {s.Bounds.Width}×{s.Bounds.Height}{(s.Primary ? ", основной" : "")}"));
+            }
+            // Выбранный монитор сейчас отключён — оставляем его в списке, чтобы выбор не слетел
+            if (list.All(o => o.Value != S.DesktopScreen))
+                list.Add(new(S.DesktopScreen, "Отключённый монитор"));
+            return list;
+        }
+    }
+
+    public string DesktopScreen
+    {
+        get => S.DesktopScreen ?? AppSettings.AllScreens;
+        set
+        {
+            value ??= AppSettings.AllScreens;
+            if (S.DesktopScreen == value) return;
+            S.DesktopScreen = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
+    public MusicSourceMode Source
+    {
+        get => S.Source;
+        set { if (S.Source == value) return; S.Source = value; Save(); OnPropertyChanged(); }
     }
 
     // ---------- Горячие клавиши ----------
@@ -190,7 +248,6 @@ public sealed class HotkeyBindingViewModel : ObservableObject
         new Option<HotkeyAction>(HotkeyAction.ToggleMute, "Вкл/выкл звук"),
         new Option<HotkeyAction>(HotkeyAction.OpenMixer, "Открыть микшер"),
         new Option<HotkeyAction>(HotkeyAction.NextDevice, "Следующее устройство вывода"),
-        new Option<HotkeyAction>(HotkeyAction.VoiceCommand, "Голосовая команда"),
     };
 
     public static IReadOnlyList<Option<HotkeyTarget>> Targets { get; } = new[]
@@ -211,7 +268,6 @@ public sealed class HotkeyBindingViewModel : ObservableObject
             OnPropertyChanged(nameof(HasTarget));
             OnPropertyChanged(nameof(HasApp));
             SettingsViewModel.Save();
-            _owner.RefreshVoiceStatus();
         }
     }
 
@@ -262,7 +318,6 @@ public sealed class HotkeyBindingViewModel : ObservableObject
         Model.Key = key;
         OnPropertyChanged(nameof(GestureText));
         SettingsViewModel.Save();
-        _owner.RefreshVoiceStatus();
     }
 
     public void BeginCapture() => _owner.SuspendHotkeys();

@@ -1,10 +1,13 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Threading;
 using Volumix.Services;
 
 namespace Volumix.Tests;
 
+// Размер значка зависит от режима DPI процесса, а его переключает первая загрузка WPF —
+// поэтому тесты, которые трогают WPF-картинки, не идут параллельно с этими
+[Collection("DPI")]
 public class MediaTrayTests
 {
     [Theory]
@@ -44,15 +47,6 @@ public class MediaTrayTests
         preview.Save(System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"volumix-media-{(light ? "light" : "dark")}.png"));
     }
 
-    [Theory]
-    [InlineData("Spotify.exe", true)]
-    [InlineData("Chrome", true)]
-    [InlineData("MSEdge", true)]
-    [InlineData("Yandex.LIHLQ6TE3JFVF6LJDXD5CT2RIM", true)]
-    [InlineData("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic", false)]
-    [InlineData("vlc.exe", false)]
-    public void RecognizesPlayers(string appId, bool expected) => Assert.Equal(expected, SpotifyService.IsPlayer(appId));
-
     /// <summary>Только читает состояние Spotify, ничего не переключает.</summary>
     [SkippableFact]
     public void FindsRunningSpotify()
@@ -62,7 +56,7 @@ public class MediaTrayTests
         var found = new TaskCompletionSource<(bool, string?)>();
         var thread = new Thread(() =>
         {
-            var spotify = new SpotifyService(Dispatcher.CurrentDispatcher);
+            var spotify = new MediaSessionService(Dispatcher.CurrentDispatcher);
             spotify.Changed += () =>
             {
                 if (spotify.IsAvailable)

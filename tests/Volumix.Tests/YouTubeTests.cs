@@ -1,41 +1,53 @@
-using System.Diagnostics;
+using System.IO;
 using Volumix.Services;
 
 namespace Volumix.Tests;
 
 public class YouTubeTests
 {
-    [Theory]
-    [InlineData("Eminem - Not Afraid", "EminemVEVO", "Not Afraid", "Eminem")]
-    [InlineData("Linkin Park - Numb (Official Music Video) [4K UPGRADE]", "Linkin Park", "Numb", "Linkin Park")]
-    [InlineData("Скриптонит — Привычка | Премьера клипа", "Скриптонит", "Привычка", "Скриптонит")]
-    [InlineData("Not Afraid", "Eminem - Topic", "Not Afraid", "Eminem")]
-    [InlineData("Bohemian Rhapsody (Remastered 2011)", "QueenVEVO", "Bohemian Rhapsody (Remastered 2011)", "Queen")]
-    [InlineData("Котик играет на пианино", null, "Котик играет на пианино", null)]
-    public void ParsesVideoTitle(string title, string? channel, string song, string? artist) =>
-        Assert.Equal((song, artist), YouTubeService.ParseTitle(title, channel));
-
-    [Theory]
-    [InlineData("Not Afraid", "Not Afraid", true)]
-    [InlineData("Numb", "Numb (Live)", true)]
-    [InlineData("Numb", "Numb / Encore", false)]
-    [InlineData("Not Afraid", "Lose Yourself", false)]
-    public void ComparesSongs(string a, string b, bool same) => Assert.Equal(same, YouTubeService.SameSong(a, b));
-
-    [Theory]
-    [InlineData("Eminem", "Eminem", true)]
-    [InlineData("Eminem", "Eminem & Rihanna", true)]
-    [InlineData("Eminem", "Linkin Park", false)]
-    public void ComparesArtists(string a, string b, bool same) => Assert.Equal(same, YouTubeService.SameArtist(a, b));
-
-    /// <summary>Официальная обложка есть в iTunes — она и должна прийти, квадратная и крупная.</summary>
-    [SkippableFact]
-    public async Task PrefersOfficialCover()
+    /// <summary>Кадр из браузера мельче, чем на YouTube, но сверка его узнаёт, а другую картинку — нет.</summary>
+    [Fact]
+    public void ComparesFrames()
     {
-        var cover = await YouTubeService.FindCoverAsync("Eminem - Not Afraid", "EminemVEVO", Array.Empty<byte>(), CancellationToken.None);
-        Skip.If(cover == null, "iTunes недоступен");
-        using var image = new System.Drawing.Bitmap(new System.IO.MemoryStream(cover!));
-        Assert.Equal(image.Width, image.Height);
-        Assert.True(image.Width >= 600, $"обложка {image.Width}×{image.Height}");
+        var frame = LyricsTests.MakeCover(1280, 720);
+        using var big = YouTubeService.Fingerprint(frame);
+        using var small = YouTubeService.Fingerprint(Shrink(frame, 150, 83));
+        using var other = YouTubeService.Fingerprint(Solid(System.Drawing.Color.SeaGreen));
+        Assert.NotNull(big);
+        Assert.InRange(YouTubeService.Difference(big!, small!), 0, 10);
+        Assert.True(YouTubeService.Difference(big!, other!) > 28);
+    }
+
+    [Theory]
+    [InlineData("Linkin Park - Numb (Fan Made Clip)", true)]
+    [InlineData("Мот — Капкан [Official Music Video]", true)]
+    [InlineData("Numb | Piano Cover", true)]
+    [InlineData("Кино - Группа крови (кавер)", true)]
+    [InlineData("Как я провёл лето — влог", false)]
+    [InlineData("Лекция 5. Матанализ", false)]
+    [InlineData("Remixing my kitchen", false)] // «remix» только целым словом
+    public void TellsMusicVideos(string title, bool music) => Assert.Equal(music, DesktopLyricsService.IsMusicVideo(title));
+
+    [Fact]
+    public void IgnoresBrokenImage() => Assert.Null(YouTubeService.Fingerprint(new byte[] { 1, 2, 3 }));
+
+    /// <summary>Как браузер: тот же кадр, ужатый до 150×83.</summary>
+    private static byte[] Shrink(byte[] image, int width, int height)
+    {
+        using var source = new System.Drawing.Bitmap(new MemoryStream(image));
+        using var bmp = new System.Drawing.Bitmap(source, width, height);
+        using var png = new MemoryStream();
+        bmp.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+        return png.ToArray();
+    }
+
+    private static byte[] Solid(System.Drawing.Color color)
+    {
+        using var bmp = new System.Drawing.Bitmap(160, 90);
+        using (var g = System.Drawing.Graphics.FromImage(bmp))
+            g.Clear(color);
+        using var png = new MemoryStream();
+        bmp.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+        return png.ToArray();
     }
 }

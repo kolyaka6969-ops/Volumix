@@ -12,15 +12,7 @@ public partial class SettingsView : UserControl
     {
         InitializeComponent();
         DataContext = App.SettingsVm;
-        IsVisibleChanged += (_, e) =>
-        {
-            if ((bool)e.NewValue)
-                App.SettingsVm.RefreshVoiceStatus(); // микрофон могли подключить, пока окно было скрыто
-        };
     }
-
-    private void TryVoice_Click(object sender, RoutedEventArgs e) =>
-        ((App)Application.Current).ToggleVoice();
 
     private void OpenSettingsFolder_Click(object sender, RoutedEventArgs e) => OpenFolder(SettingsService.Folder);
 

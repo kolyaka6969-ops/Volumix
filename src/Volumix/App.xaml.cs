@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -23,8 +23,7 @@ public partial class App : Application
     private MainWindow? _main;
     private FlyoutWindow? _flyout;
     private OsdWindow? _osd;
-    private VoiceController? _voice;
-    private SpotifyService? _spotify;
+    private MediaSessionService? _media;
     private DesktopLyricsService? _desktopLyrics;
 
     public static MixerViewModel Mixer { get; private set; } = null!;
@@ -72,16 +71,41 @@ public partial class App : Application
         _hotkeys = new HotkeyService();
         _hotkeys.Pressed += OnHotkey;
         SettingsVm = new SettingsViewModel(_hotkeys, Mixer);
-        _voice = new VoiceController(this, Mixer, SettingsVm, () => _osd ??= new OsdWindow());
-        _spotify = new SpotifyService(Dispatcher);
-        _tray = new TrayService(this, Mixer, SettingsVm, _spotify);
-        _desktopLyrics = new DesktopLyricsService(_spotify, Dispatcher) { Enabled = SettingsVm.DesktopLyrics };
+        _media = new MediaSessionService(Dispatcher) { Mode = SettingsVm.Source };
+        _tray = new TrayService(this, Mixer, SettingsVm, _media);
+        _desktopLyrics = new DesktopLyricsService(_media, Dispatcher)
+        {
+            MarqueeSpeed = SettingsVm.MarqueeSpeed,
+            MarqueeFps = SettingsVm.MarqueeFps,
+            Screen = SettingsVm.DesktopScreen,
+            Controls = SettingsVm.DesktopControls,
+            Enabled = SettingsVm.DesktopLyrics,
+        };
         SettingsVm.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName == nameof(SettingsViewModel.DesktopLyrics))
-                _desktopLyrics.Enabled = SettingsVm.DesktopLyrics;
+            switch (args.PropertyName)
+            {
+                case nameof(SettingsViewModel.DesktopLyrics):
+                    _desktopLyrics.Enabled = SettingsVm.DesktopLyrics;
+                    break;
+                case nameof(SettingsViewModel.MarqueeSpeed):
+                    _desktopLyrics.MarqueeSpeed = SettingsVm.MarqueeSpeed;
+                    break;
+                case nameof(SettingsViewModel.MarqueeFps):
+                    _desktopLyrics.MarqueeFps = SettingsVm.MarqueeFps;
+                    break;
+                case nameof(SettingsViewModel.DesktopScreen):
+                    _desktopLyrics.Screen = SettingsVm.DesktopScreen;
+                    break;
+                case nameof(SettingsViewModel.DesktopControls):
+                    _desktopLyrics.Controls = SettingsVm.DesktopControls;
+                    break;
+                case nameof(SettingsViewModel.Source):
+                    _media.Mode = SettingsVm.Source;
+                    break;
+            }
         };
-        _spotify.Start();
+        _media.Start();
 
         if (!e.Args.Contains(AutostartService.TrayArgument, StringComparer.OrdinalIgnoreCase))
             ShowMain(AppPage.Mixer);
@@ -123,9 +147,6 @@ public partial class App : Application
         _main?.Hide();
     }
 
-    /// <summary>Начать или отменить голосовую команду.</summary>
-    public void ToggleVoice() => _voice?.Toggle();
-
     private void OnHotkey(HotkeyBinding b)
     {
         var settings = SettingsService.Current;
@@ -135,9 +156,6 @@ public partial class App : Application
         {
             case HotkeyAction.OpenMixer:
                 ToggleFlyout();
-                return;
-            case HotkeyAction.VoiceCommand:
-                ToggleVoice();
                 return;
             case HotkeyAction.NextDevice:
                 Mixer.NextDevice();
@@ -200,9 +218,8 @@ public partial class App : Application
         IsExiting = true;
         _desktopLyrics?.Dispose();
         _tray?.Dispose();
-        _spotify?.Dispose();
+        _media?.Dispose();
         _hotkeys?.Dispose();
-        _voice?.Dispose();
         Mixer?.Dispose();
         _showEvent?.Set();
         Shutdown();
@@ -214,6 +231,18 @@ public partial class App : Application
         _mutex?.ReleaseMutex();
         _mutex?.Dispose();
         base.OnExit(e);
+    }
+
+    /// <summary>
+    /// Дорожка ползунка WPF-UI идёт на всю ширину, а бегунок — круг: на 0 и 100 % её скруглённый край
+    /// выглядывает из-под него. Дорожка от центра бегунка до центра бегунка — как индикатор уровня под ней.
+    /// </summary>
+    private void VolumeSlider_Loaded(object sender, RoutedEventArgs e)
+    {
+        var slider = (System.Windows.Controls.Slider)sender;
+        if (slider.Template?.FindName("TrackBackground", slider) is FrameworkElement track &&
+            slider.Template.FindName("Thumb", slider) is FrameworkElement thumb)
+            track.Margin = new Thickness(thumb.Width / 2, 0, thumb.Width / 2, 0);
     }
 
     internal static void LogError(object error)

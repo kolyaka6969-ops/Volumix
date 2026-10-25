@@ -2,24 +2,14 @@
 # Нужны: .NET 8 SDK и Inno Setup 6 (winget install JRSoftware.InnoSetup)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$version = '1.4.0'
-$modelName = 'vosk-model-small-ru-0.22'
+$version = '1.5.5'
 
 # WPF в Release молча теряет ресурсы, если пути в obj длиннее 260 символов
 if ($root.Length -gt 140) {
     Write-Warning "Путь к проекту очень длинный ($($root.Length) символов). Перенесите папку поближе к корню диска, например C:\Projects\Volumix."
 }
 
-if (-not (Test-Path "$root\models\$modelName\am")) {
-    Write-Host "==> Скачивание модели распознавания речи $modelName (45 МБ)" -ForegroundColor Cyan
-    New-Item -ItemType Directory -Force "$root\models" | Out-Null
-    $zip = "$root\models\$modelName.zip"
-    Invoke-WebRequest "https://alphacephei.com/vosk/models/$modelName.zip" -OutFile $zip -UseBasicParsing
-    Expand-Archive $zip -DestinationPath "$root\models" -Force
-    Remove-Item $zip
-}
-
-Write-Host '==> Публикация приложения (self-contained, exe + модель речи)' -ForegroundColor Cyan
+Write-Host '==> Публикация приложения (self-contained)' -ForegroundColor Cyan
 if (Test-Path "$root\publish") { Remove-Item -Recurse -Force "$root\publish" }
 dotnet publish "$root\src\Volumix\Volumix.csproj" -c Release -p:Version=$version -o "$root\publish"
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish завершился с ошибкой' }

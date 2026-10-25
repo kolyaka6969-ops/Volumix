@@ -18,24 +18,34 @@ internal sealed class DesktopLayer : IDisposable
 {
     /// <summary>
     /// Куда вставлять окно. Windows 11 24H2+: значки (SHELLDLL_DefView) лежат прямо в Progman, окно встаёт сразу под ними
-    /// и должно быть слоистым. Раньше: по сообщению 0x052C Progman создаёт WorkerW позади значков, окно встаёт в него.
+    /// (Raised). Раньше: по сообщению 0x052C Progman создаёт WorkerW позади значков, окно встаёт в него поверх всего,
+    /// что там уже есть — в том числе поверх Wallpaper Engine и Lively. У родителя без своей поверхности
+    /// (WS_EX_NOREDIRECTIONBITMAP) окно должно быть слоистым (Layered), иначе его не видно.
     /// </summary>
-    private sealed record Target(IntPtr Parent, IntPtr Icons, bool Raised);
+    private sealed record Target(IntPtr Parent, IntPtr Icons, bool Raised, bool Layered);
 
     private const uint WM_SPAWN_WORKER = 0x052C;
-    private static readonly TimeSpan WatchInterval = TimeSpan.FromSeconds(2);
+    /// <summary>
+    /// Wallpaper Engine и Lively тоже встают сразу под значки и после смены обоев оказываются поверх нас —
+    /// проверяем почаще, чтобы вернуться наверх почти сразу. Проверка — пара вызовов GetWindow.
+    /// </summary>
+    private static readonly TimeSpan WatchInterval = TimeSpan.FromSeconds(1);
 
     private readonly UIElement _content;
+    // Монитор по имени устройства (\\.\DISPLAY2); null — основной
+    private readonly string? _device;
     private readonly DispatcherTimer _watch;
     private HwndSource? _source;
     private Decorator? _frame;
     private Target? _target;
     private bool _visible;
 
-    public DesktopLayer(UIElement content)
+    public DesktopLayer(UIElement content, string? device = null)
     {
         _content = content;
-        // Explorer могут перезапустить, экран — сменить: раз в пару секунд проверяем, что окно на месте
+        _device = device;
+        // Explorer могут перезапустить, экран — сменить, другая программа обоев — перекрыть: раз в секунду
+        // проверяем, что окно на месте
         _watch = new DispatcherTimer { Interval = WatchInterval };
         _watch.Tick += (_, _) => Ensure();
     }
@@ -77,7 +87,7 @@ internal sealed class DesktopLayer : IDisposable
         if (_target == null)
             return; // Explorer ещё запускается — попробуем на следующей проверке
 
-        var (x, y, width, height) = Bounds(_target);
+        var (x, y, width, height) = Bounds(_target, _device);
         var p = new HwndSourceParameters("Volumix desktop", width, height)
         {
             ParentWindow = _target.Parent,
@@ -100,7 +110,7 @@ internal sealed class DesktopLayer : IDisposable
         }
         _source.CompositionTarget.BackgroundColor = Colors.Black;
         hwnd = _source.Handle;
-        if (_target.Raised)
+        if (_target.Layered)
         {
             // Progman здесь без своей поверхности (рисуется через DirectComposition), и обычное дочернее окно
             // в нём не видно — нужно слоистое со своей
@@ -125,32 +135,57 @@ internal sealed class DesktopLayer : IDisposable
         return IntPtr.Zero;
     }
 
-    private static System.Drawing.Rectangle Screen =>
-        Forms.Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
-
-    /// <summary>Весь основной монитор в координатах родителя (родитель охватывает все мониторы).</summary>
-    private static (int X, int Y, int Width, int Height) Bounds(Target target)
+    /// <summary>Границы монитора; если его отключили — основного.</summary>
+    internal static System.Drawing.Rectangle ScreenBounds(string? device)
     {
-        var screen = Screen;
+        if (device != null)
+            foreach (var screen in Forms.Screen.AllScreens)
+                if (screen.DeviceName == device)
+                    return screen.Bounds;
+        return Forms.Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
+    }
+
+    /// <summary>Весь монитор в координатах родителя (родитель охватывает все мониторы).</summary>
+    private static (int X, int Y, int Width, int Height) Bounds(Target target, string? device)
+    {
+        var screen = ScreenBounds(device);
         var origin = new POINT { X = screen.Left, Y = screen.Top };
         ScreenToClient(target.Parent, ref origin);
         return (origin.X, origin.Y, screen.Width, screen.Height);
     }
 
-    private static void Place(IntPtr hwnd, Target target, bool onlyIfMoved)
+    private void Place(IntPtr hwnd, Target target, bool onlyIfMoved)
     {
         if (onlyIfMoved)
         {
-            var screen = Screen;
+            var screen = ScreenBounds(_device);
             bool inPlace = GetWindowRect(hwnd, out var r)
                            && r.Left == screen.Left && r.Top == screen.Top && r.Right == screen.Right && r.Bottom == screen.Bottom;
-            bool inOrder = target.Raised ? GetWindow(target.Icons, GW_HWNDNEXT) == hwnd : GetWindow(target.Parent, GW_CHILD) == hwnd;
-            if (inPlace && inOrder)
+            if (inPlace && InOrder(hwnd, target))
                 return;
         }
-        var (x, y, width, height) = Bounds(target);
+        var (x, y, width, height) = Bounds(target, _device);
         IntPtr after = target.Raised ? target.Icons : IntPtr.Zero; // HWND_TOP внутри WorkerW
         SetWindowPos(hwnd, after, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
+    /// <summary>
+    /// Окно стоит выше всего остального в слое обоев. Окна Volumix на других мониторах могут стоять
+    /// между нами и значками: они друг друга не перекрывают, и наверх их не тащим — иначе окна
+    /// толкались бы между собой каждую секунду.
+    /// </summary>
+    private static bool InOrder(IntPtr hwnd, Target target)
+    {
+        var w = target.Raised ? GetWindow(target.Icons, GW_HWNDNEXT) : GetWindow(target.Parent, GW_CHILD);
+        while (w != IntPtr.Zero && w != hwnd && IsOwnWindow(w))
+            w = GetWindow(w, GW_HWNDNEXT);
+        return w == hwnd;
+    }
+
+    private static bool IsOwnWindow(IntPtr hwnd)
+    {
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        return pid == Environment.ProcessId;
     }
 
     private static Target? FindTarget()
@@ -160,25 +195,34 @@ internal sealed class DesktopLayer : IDisposable
             return null;
         SendMessageTimeout(progman, WM_SPAWN_WORKER, new IntPtr(0xD), new IntPtr(1), SMTO_NORMAL, 1000, out _);
 
-        if ((GetWindowLongPtr(progman, GWL_EXSTYLE).ToInt64() & WS_EX_NOREDIRECTIONBITMAP) != 0)
+        if (NoSurface(progman))
         {
             var icons = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
-            return icons == IntPtr.Zero ? null : new Target(progman, icons, Raised: true);
+            if (icons != IntPtr.Zero)
+                return new Target(progman, icons, Raised: true, Layered: true);
+            // Значки не в Progman: их перенесла другая программа обоев — ищем, где они теперь
         }
 
-        IntPtr defView = IntPtr.Zero, worker = IntPtr.Zero;
+        IntPtr defView = IntPtr.Zero, host = IntPtr.Zero, worker = IntPtr.Zero;
         EnumWindows((top, _) =>
         {
             var view = FindWindowEx(top, IntPtr.Zero, "SHELLDLL_DefView", null);
             if (view != IntPtr.Zero)
             {
                 defView = view;
+                host = top;
                 worker = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
             }
             return true;
         }, IntPtr.Zero);
-        return worker == IntPtr.Zero ? null : new Target(worker, defView, Raised: false);
+        if (worker != IntPtr.Zero)
+            return new Target(worker, defView, Raised: false, Layered: NoSurface(worker));
+        // Слоя позади значков нет — встаём под значки в том же окне, что и они
+        return defView == IntPtr.Zero ? null : new Target(host, defView, Raised: true, Layered: true);
     }
+
+    private static bool NoSurface(IntPtr hwnd) =>
+        (GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64() & WS_EX_NOREDIRECTIONBITMAP) != 0;
 
     private void Destroy()
     {
