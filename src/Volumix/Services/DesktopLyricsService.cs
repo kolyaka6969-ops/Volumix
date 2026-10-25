@@ -7,13 +7,13 @@ using Volumix.Views;
 namespace Volumix.Services;
 
 /// <summary>
-/// Песня и её текст на рабочем столе вместо обоев, пока открыт Spotify.
+/// Песня и её текст на рабочем столе вместо обоев, пока играет Spotify или браузер.
 /// Окно работает в своём потоке: Explorer связывает очередь ввода дочернего окна со своей, и любое подвисание
 /// интерфейса Volumix подвесило бы рабочий стол.
 /// </summary>
 public sealed class DesktopLyricsService : IDisposable
 {
-    /// <summary>Spotify присылает название раньше длительности, а без неё текст ищется хуже — ждём, пока всё придёт.</summary>
+    /// <summary>Плеер присылает название раньше длительности, а без неё текст ищется хуже — ждём, пока всё придёт.</summary>
     private static readonly TimeSpan FetchDelay = TimeSpan.FromMilliseconds(700);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(1);
 
@@ -95,7 +95,11 @@ public sealed class DesktopLyricsService : IDisposable
             return;
         var cts = new CancellationTokenSource();
         _fetch = cts;
-        var lyrics = await LyricsService.FindAsync(track.Title, track.Artist, track.Album, track.Duration, cts.Token);
+        // У ролика в названии «Исполнитель - Песня (Official Video)», а исполнитель — это канал.
+        // Клип обычно длиннее песни на вступление, поэтому и длительность сверяем мягче.
+        var lyrics = track.IsVideo
+            ? await FindVideoLyricsAsync(track, cts.Token)
+            : await LyricsService.FindAsync(track.Title, track.Artist, track.Album, track.Duration, cts.Token);
         if (cts.IsCancellationRequested)
             return;
         Post(() => _view!.ShowLyrics(track.Key, lyrics));
@@ -104,6 +108,15 @@ public sealed class DesktopLyricsService : IDisposable
             _fetchTimer.Interval = RetryDelay;
             _fetchTimer.Start();
         }
+    }
+
+    private static Task<Lyrics> FindVideoLyricsAsync(NowPlaying track, CancellationToken ct)
+    {
+        // Свой файл ищется по названию ролика как есть — так его проще назвать
+        if (LyricsService.FindLocal(track.Title, track.Artist) is { } local)
+            return Task.FromResult(local);
+        var (title, artist) = YouTubeService.ParseTitle(track.Title, track.Artist);
+        return LyricsService.FindAsync(title, artist, null, track.Duration, ct, LyricsService.VideoDurationTolerance);
     }
 
     private void EnsureThread()

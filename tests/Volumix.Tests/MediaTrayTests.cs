@@ -44,6 +44,15 @@ public class MediaTrayTests
         preview.Save(System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"volumix-media-{(light ? "light" : "dark")}.png"));
     }
 
+    [Theory]
+    [InlineData("Spotify.exe", true)]
+    [InlineData("Chrome", true)]
+    [InlineData("MSEdge", true)]
+    [InlineData("Yandex.LIHLQ6TE3JFVF6LJDXD5CT2RIM", true)]
+    [InlineData("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic", false)]
+    [InlineData("vlc.exe", false)]
+    public void RecognizesPlayers(string appId, bool expected) => Assert.Equal(expected, SpotifyService.IsPlayer(appId));
+
     /// <summary>Только читает состояние Spotify, ничего не переключает.</summary>
     [SkippableFact]
     public void FindsRunningSpotify()

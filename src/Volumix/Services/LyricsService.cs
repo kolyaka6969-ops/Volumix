@@ -57,6 +57,8 @@ public static class LyricsService
 
     /// <summary>Допуск по длительности: у альбомной версии и сингла она часто расходится на секунду-две.</summary>
     private const double DurationTolerance = 3;
+    /// <summary>У клипа вступление и концовка, которых нет в песне.</summary>
+    internal const double VideoDurationTolerance = 25;
     private const int CacheLimit = 200;
 
     private static readonly HttpClient Http = CreateClient();
@@ -81,19 +83,20 @@ public static class LyricsService
     }
 
     /// <summary>Никогда не бросает исключений: при сбое сети вернёт <see cref="Lyrics.Error"/>.</summary>
-    public static async Task<Lyrics> FindAsync(string title, string? artist, string? album, TimeSpan duration, CancellationToken ct)
+    public static async Task<Lyrics> FindAsync(string title, string? artist, string? album, TimeSpan duration, CancellationToken ct,
+        double tolerance = DurationTolerance)
     {
         // Свои файлы не кэшируем: их могут положить, пока песня играет
         if (FindLocal(title, artist) is { } local)
             return local;
 
-        var key = $"{artist}\n{title}\n{(int)duration.TotalSeconds}";
+        var key = $"{artist}\n{title}\n{(int)duration.TotalSeconds}\n{tolerance}";
         lock (Cache)
             if (Cache.TryGetValue(key, out var cached))
                 return cached;
 
         Lyrics lyrics;
-        try { lyrics = await FetchAsync(title, artist, album, duration, ct); }
+        try { lyrics = await FetchAsync(title, artist, album, duration, tolerance, ct); }
         catch (Exception) { lyrics = Lyrics.Error; } // нет сети, таймаут, отмена, кривой ответ
 
         if (lyrics.Status != LyricsStatus.Error)
@@ -136,7 +139,8 @@ public static class LyricsService
         return name.Trim().TrimEnd('.');
     }
 
-    private static async Task<Lyrics> FetchAsync(string title, string? artist, string? album, TimeSpan duration, CancellationToken ct)
+    private static async Task<Lyrics> FetchAsync(string title, string? artist, string? album, TimeSpan duration, double tolerance,
+        CancellationToken ct)
     {
         double seconds = Math.Round(duration.TotalSeconds);
         // Текст без синхронизации берём, только если синхронного так и не найдётся
@@ -175,7 +179,7 @@ public static class LyricsService
                 continue;
             }
             var found = JsonSerializer.Deserialize<List<LrcLibTrack>>(await response.Content.ReadAsStringAsync(ct), Json);
-            var lyrics = found == null ? null : Pick(found, seconds);
+            var lyrics = found == null ? null : Pick(found, seconds, tolerance);
             if (lyrics?.Status == LyricsStatus.Synced)
                 return lyrics;
             best ??= lyrics;
@@ -184,8 +188,8 @@ public static class LyricsService
     }
 
     /// <summary>Лучший из найденных: подходящий по длительности, синхронный, потом просто текст.</summary>
-    private static Lyrics? Pick(List<LrcLibTrack> found, double seconds) =>
-        found.Where(t => seconds <= 0 || Math.Abs(t.Duration - seconds) <= DurationTolerance)
+    private static Lyrics? Pick(List<LrcLibTrack> found, double seconds, double tolerance) =>
+        found.Where(t => seconds <= 0 || Math.Abs(t.Duration - seconds) <= tolerance)
             .Select(t => (Track: t, Lyrics: ToLyrics(t)))
             .Where(x => x.Lyrics != null)
             .OrderBy(x => x.Lyrics!.Status switch { LyricsStatus.Synced => 0, LyricsStatus.Plain => 1, _ => 2 })

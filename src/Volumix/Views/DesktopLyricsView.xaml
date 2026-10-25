@@ -65,7 +65,8 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,0,40">
-                    <Grid Width="440" Height="440" HorizontalAlignment="Left">
+                    <!-- Высоту под широкую обложку (кадр из клипа) ставит код -->
+                    <Grid x:Name="CoverBox" Width="440" Height="440" HorizontalAlignment="Left">
                         <Grid.Effect>
                             <DropShadowEffect BlurRadius="70" ShadowDepth="18" Direction="270" Opacity="0.55" />
                         </Grid.Effect>
@@ -80,7 +81,7 @@
                     </Grid>
 
                     <TextBlock x:Name="TitleText" Margin="0,40,0,0" FontSize="46" FontWeight="Bold" LineHeight="54"
-                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="108" />
+                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="166" />
                     <TextBlock x:Name="ArtistText" Margin="0,8,0,0" FontSize="28" FontWeight="SemiBold" Opacity="0.78"
                                TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="AlbumText" Margin="0,4,0,0" FontSize="22" Opacity="0.5" TextTrimming="CharacterEllipsis" />
@@ -126,6 +127,17 @@
                             </StackPanel.RenderTransform>
                         </StackPanel>
                     </Canvas>
+                    <!-- Клип без текста: вместо текста — обложка крупно. Размер под её пропорции ставит код -->
+                    <Grid x:Name="BigCover" Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Center" Visibility="Collapsed">
+                        <Grid.Effect>
+                            <DropShadowEffect BlurRadius="80" ShadowDepth="20" Direction="270" Opacity="0.6" />
+                        </Grid.Effect>
+                        <Border CornerRadius="22">
+                            <Border.Background>
+                                <ImageBrush x:Name="BigCoverBrush" Stretch="UniformToFill" />
+                            </Border.Background>
+                        </Border>
+                    </Grid>
                     <StackPanel x:Name="Status" Grid.Row="1" VerticalAlignment="Center">
                         <TextBlock x:Name="StatusText" FontSize="44" FontWeight="SemiBold" Opacity="0.55" TextWrapping="Wrap" />
                         <TextBlock x:Name="StatusHint" FontSize="20" Opacity="0.4" TextWrapping="Wrap" Margin="0,16,0,0" LineHeight="30" />

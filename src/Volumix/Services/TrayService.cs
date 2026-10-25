@@ -94,7 +94,7 @@ public sealed class TrayService : IDisposable
             menu.Items.Add(Item("Голосовая команда", _app.ToggleVoice));
         menu.Items.Add(new MenuItem
         {
-            Header = "Кнопки Spotify в трее",
+            Header = "Кнопки плеера в трее",
             IsCheckable = true,
             IsChecked = _settings.MediaButtons,
         }.Also(mi => mi.Click += (_, _) => _settings.MediaButtons = mi.IsChecked));

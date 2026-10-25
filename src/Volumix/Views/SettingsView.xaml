@@ -53,8 +53,8 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE768;" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                    <TextBlock Style="{StaticResource Body}" Text="Кнопки Spotify в трее" />
-                    <TextBlock Style="{StaticResource Caption}" Text="Назад, пауза и вперёд рядом с часами, пока открыт Spotify. Если они под стрелкой ^ — перетащите их на панель задач" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource Body}" Text="Кнопки плеера в трее" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Назад, пауза и вперёд рядом с часами, пока играет Spotify или браузер (Chrome, Edge, Яндекс). Если они под стрелкой ^ — перетащите их на панель задач" TextWrapping="Wrap" />
                 </StackPanel>
                 <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding MediaButtons}" OnContent="Вкл." OffContent="Выкл." />
             </Grid>
@@ -71,7 +71,7 @@
                 <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE8D6;" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Style="{StaticResource Body}" Text="Песня и текст на рабочем столе" />
-                    <TextBlock Style="{StaticResource Caption}" Text="Пока открыт Spotify, вместо обоев — обложка и текст песни, строки подсвечиваются под музыку. Тексты берутся с lrclib.net, свои можно положить в папку файлами .lrc" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource Caption}" Text="Пока играет Spotify или браузер, вместо обоев — обложка и текст песни, строки подсвечиваются под музыку. Тексты берутся с lrclib.net, свои можно положить в папку файлами .lrc" TextWrapping="Wrap" />
                 </StackPanel>
                 <ui:Button Grid.Column="2" Margin="0,0,12,0" Content="Папка текстов" Click="OpenLyricsFolder_Click" />
                 <ui:ToggleSwitch Grid.Column="3" IsChecked="{Binding DesktopLyrics}" OnContent="Вкл." OffContent="Выкл." />

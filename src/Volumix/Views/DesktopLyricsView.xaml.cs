@@ -22,10 +22,14 @@ public partial class DesktopLyricsView : UserControl
     private static readonly TimeSpan MinTick = TimeSpan.FromMilliseconds(30);
     private static readonly Duration ScrollTime = TimeSpan.FromMilliseconds(550);
     private static readonly Duration FadeTime = TimeSpan.FromMilliseconds(350);
+    private const double CoverSize = 440;
+    /// <summary>Место под крупную обложку клипа в макете 1920×1080.</summary>
+    private const double BigCoverWidth = 790, BigCoverHeight = 760;
 
     private readonly DispatcherTimer _timer = new();
     private readonly List<TextBlock> _lines = new();
     private NowPlaying? _track;
+    private BitmapSource? _cover;
     private Lyrics _lyrics = Lyrics.Loading;
     private int _current = int.MinValue;
     private bool _jump;
@@ -98,6 +102,7 @@ public partial class DesktopLyricsView : UserControl
             _ => ("", ""),
         };
         Status.Visibility = StatusText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateBigCover();
 
         _current = int.MinValue;
         _jump = true;
@@ -198,11 +203,41 @@ public partial class DesktopLyricsView : UserControl
         LinesShift.BeginAnimation(TranslateTransform.YProperty, animation);
     }
 
+    /// <summary>
+    /// Неофициальный клип или просто видео: текста нет — показываем обложку крупно вместо надписи «не найден»,
+    /// а маленькую слева убираем, чтобы не повторялась.
+    /// </summary>
+    private void UpdateBigCover()
+    {
+        bool big = _track is { IsVideo: true } && _cover != null && _lyrics.Status is LyricsStatus.NotFound or LyricsStatus.Error;
+        BigCover.Visibility = big ? Visibility.Visible : Visibility.Collapsed;
+        CoverBox.Visibility = big ? Visibility.Collapsed : Visibility.Visible;
+        if (big)
+        {
+            Status.Visibility = Visibility.Collapsed;
+            double aspect = Aspect(_cover!);
+            double width = BigCoverWidth, height = width / aspect;
+            if (height > BigCoverHeight)
+                (width, height) = (BigCoverHeight * aspect, BigCoverHeight);
+            BigCover.Width = width;
+            BigCover.Height = height;
+        }
+    }
+
+    /// <summary>Пропорции обложки: кадр из клипа шире квадрата, но не шире 16:9.</summary>
+    private static double Aspect(BitmapSource image) =>
+        Math.Clamp(image.PixelHeight > 0 ? (double)image.PixelWidth / image.PixelHeight : 1, 1, 16 / 9.0);
+
     private void SetCover(byte[]? data)
     {
         var image = Decode(data, 0);
+        _cover = image;
         CoverBrush.ImageSource = image;
+        BigCoverBrush.ImageSource = image;
         CoverGlyph.Visibility = image == null ? Visibility.Visible : Visibility.Collapsed;
+        // Почти квадратную обложку оставляем квадратной, кадр из клипа — во всю ширину
+        CoverBox.Height = image == null || Aspect(image) < 1.15 ? CoverSize : CoverSize / Aspect(image);
+        UpdateBigCover();
 
         // Для фона хватает крошечной копии: растянутая, она уже почти размыта, и яркие детали обложки
         // не превращаются в пятна под текстом. Новый фон проявляется поверх старого.

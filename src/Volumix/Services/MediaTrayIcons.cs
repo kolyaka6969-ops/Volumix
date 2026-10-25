@@ -11,7 +11,7 @@ using Forms = System.Windows.Forms;
 namespace Volumix.Services;
 
 /// <summary>
-/// Три значка в трее — «предыдущий», «пауза/play», «следующий» — для Spotify.
+/// Три значка в трее — «предыдущий», «пауза/play», «следующий» — для Spotify или вкладки браузера.
 /// Значки создаются один раз и только прячутся: Windows запоминает видимость значка по его номеру,
 /// а новый номер снова отправил бы его в скрытые.
 /// </summary>
@@ -47,9 +47,9 @@ public sealed class MediaTrayIcons : IDisposable
         _dispatcher = dispatcher;
 
         // Порядок создания не менять: Windows помнит, показан ли значок на панели, по его номеру
-        _previous = Create("Spotify: предыдущий трек", _spotify.Previous);
-        _playPause = Create("Spotify", _spotify.TogglePlayPause);
-        _next = Create("Spotify: следующий трек", _spotify.Next);
+        _previous = Create("Предыдущий трек", _spotify.Previous);
+        _playPause = Create("Плеер", _spotify.TogglePlayPause);
+        _next = Create("Следующий трек", _spotify.Next);
 
         Forms.NotifyIcon Create(string text, Action click)
         {
@@ -78,7 +78,7 @@ public sealed class MediaTrayIcons : IDisposable
         bool show = _enabled && _spotify.IsAvailable;
 
         _playPause.Icon = _icons[_spotify.IsPlaying ? GlyphPause : GlyphPlay];
-        var track = _spotify.Title == null ? "Spotify"
+        var track = _spotify.Title == null ? "Плеер"
             : _spotify.Artist == null ? _spotify.Title
             : $"{_spotify.Artist} — {_spotify.Title}";
         _playPause.Text = Trim($"{(_spotify.IsPlaying ? "Пауза" : "Играть")}\n{track}");

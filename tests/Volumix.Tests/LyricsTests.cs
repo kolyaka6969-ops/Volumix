@@ -61,7 +61,7 @@ public class LyricsTests
     public void ExtrapolatesPosition()
     {
         var at = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-        var track = new NowPlaying("t", "a", null, null, true, TimeSpan.FromSeconds(10), at, TimeSpan.FromSeconds(60));
+        var track = new NowPlaying("t", "a", null, null, true, TimeSpan.FromSeconds(10), at, TimeSpan.FromSeconds(60), false);
         Assert.Equal(TimeSpan.FromSeconds(15), track.PositionAt(at.AddSeconds(5)));
         Assert.Equal(TimeSpan.FromSeconds(60), track.PositionAt(at.AddMinutes(5)));          // не дальше конца трека
         Assert.Equal(TimeSpan.FromSeconds(10), (track with { IsPlaying = false }).PositionAt(at.AddSeconds(5)));
@@ -78,13 +78,15 @@ public class LyricsTests
     }
 
     /// <summary>Рисует обои вне экрана и сохраняет картинку в %TEMP%\volumix-desktop.png, чтобы на неё посмотреть.</summary>
-    [Fact]
-    public void RendersDesktopView()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RendersDesktopView(bool video)
     {
         Exception? error = null;
         var thread = new Thread(() =>
         {
-            try { Render(); }
+            try { Render(video); }
             catch (Exception e) { error = e; }
         });
         thread.SetApartmentState(ApartmentState.STA);
@@ -93,7 +95,8 @@ public class LyricsTests
         Assert.Null(error);
     }
 
-    private static void Render()
+    /// <param name="video">Клип без текста: обложка 16:9 крупно вместо текста.</param>
+    private static void Render(bool video)
     {
         const int width = 1536, height = 864; // 1920×1080 при масштабе 125 %
         var view = new DesktopLyricsView();
@@ -111,10 +114,13 @@ public class LyricsTests
         window.Show();
 
         var now = DateTimeOffset.Now;
-        var track = new NowPlaying("Numb", "Linkin Park", "Meteora", MakeCover(), true,
-            TimeSpan.FromSeconds(31), now, TimeSpan.FromSeconds(186));
+        var track = video
+            ? new NowPlaying("Linkin Park - Numb (Fan Made Video)", "LP Fans", null, MakeCover(480, 270), true,
+                TimeSpan.FromSeconds(31), now, TimeSpan.FromSeconds(214), true)
+            : new NowPlaying("Numb", "Linkin Park", "Meteora", MakeCover(300, 300), true,
+                TimeSpan.FromSeconds(31), now, TimeSpan.FromSeconds(186), false);
         view.ShowTrack(track);
-        view.ShowLyrics(track.Key, Lyrics.FromLrc("""
+        view.ShowLyrics(track.Key, video ? Lyrics.NotFound : Lyrics.FromLrc("""
             [00:21.58]I'm tired of being what you want me to be
             [00:25.62]Feeling so faithless, lost under the surface
             [00:30.61]Don't know what you're expecting of me
@@ -137,7 +143,7 @@ public class LyricsTests
         bitmap.Render(view);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using (var file = File.Create(Path.Combine(Path.GetTempPath(), "volumix-desktop.png")))
+        using (var file = File.Create(Path.Combine(Path.GetTempPath(), video ? "volumix-desktop-video.png" : "volumix-desktop.png")))
             encoder.Save(file);
 
         window.Close();
@@ -145,15 +151,15 @@ public class LyricsTests
     }
 
     /// <summary>Яркая «обложка», чтобы было видно размытый фон.</summary>
-    private static byte[] MakeCover()
+    private static byte[] MakeCover(int width, int height)
     {
-        using var bmp = new System.Drawing.Bitmap(300, 300);
+        using var bmp = new System.Drawing.Bitmap(width, height);
         using (var g = System.Drawing.Graphics.FromImage(bmp))
-        using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(new System.Drawing.Point(0, 0), new System.Drawing.Point(300, 300),
+        using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(new System.Drawing.Point(0, 0), new System.Drawing.Point(width, height),
                    System.Drawing.Color.FromArgb(220, 60, 40), System.Drawing.Color.FromArgb(30, 60, 160)))
         {
-            g.FillRectangle(brush, 0, 0, 300, 300);
-            g.FillEllipse(System.Drawing.Brushes.Gold, 90, 90, 120, 120);
+            g.FillRectangle(brush, 0, 0, width, height);
+            g.FillEllipse(System.Drawing.Brushes.Gold, width / 2 - 60, height / 2 - 60, 120, 120);
         }
         using var png = new MemoryStream();
         bmp.Save(png, System.Drawing.Imaging.ImageFormat.Png);

@@ -30,9 +30,9 @@ public sealed class AppSettings
     public bool ShowOsd { get; set; } = true;
     public bool CloseToTray { get; set; } = true;
     public bool VoiceEnabled { get; set; } = true;
-    /// <summary>Кнопки Spotify (назад / пауза / вперёд) значками в трее.</summary>
+    /// <summary>Кнопки плеера — Spotify или браузера (назад / пауза / вперёд) значками в трее.</summary>
     public bool MediaButtons { get; set; } = true;
-    /// <summary>Песня и её текст на рабочем столе вместо обоев, пока открыт Spotify.</summary>
+    /// <summary>Песня и её текст на рабочем столе вместо обоев, пока играет Spotify или браузер.</summary>
     public bool DesktopLyrics { get; set; }
     /// <summary>Версия формата настроек, для добавления новых значений по умолчанию старым пользователям.</summary>
     public int Version { get; set; }

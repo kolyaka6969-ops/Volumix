@@ -2,7 +2,7 @@
 # Нужны: .NET 8 SDK и Inno Setup 6 (winget install JRSoftware.InnoSetup)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$version = '1.3.0'
+$version = '1.4.0'
 $modelName = 'vosk-model-small-ru-0.22'
 
 # WPF в Release молча теряет ресурсы, если пути в obj длиннее 260 символов
