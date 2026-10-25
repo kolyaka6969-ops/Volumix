@@ -138,6 +138,10 @@ public class MediaSessionTests
     [InlineData("Группа крови (Lyrics)", "Группа крови")]
     [InlineData("Группа крови (Official Audio)", "Группа крови")]
     [InlineData("Группа крови (Live)", "Группа крови (Live)")]
+    [InlineData("ПОШЛАЯ МОЛЛИ - МОЛЛИ [320 kbps]+ Текст", "ПОШЛАЯ МОЛЛИ - МОЛЛИ")]
+    [InlineData("Группа крови | Lyrics", "Группа крови")]
+    [InlineData("Группа крови (slowed + reverb)", "Группа крови")]
+    [InlineData("Мой текст", "Мой текст")]
     public void StripsVideoNoise(string title, string expected) =>
         Assert.Equal(expected, MediaSessionService.StripVideoNoise(title));
 
@@ -164,6 +168,17 @@ public class MediaSessionTests
 
         var candidates = MediaSessionService.Candidates(title, artist).Take(4).ToList();
         Assert.Equal(("See You Again", "Wiz Khalifa"), (candidates[1].Title, candidates[1].Artist));
+    }
+
+    /// <summary>Ролики из джема, которые не узнавались: приписка «+ Текст» и гость через «starring».</summary>
+    [Theory]
+    [InlineData("ПОШЛАЯ МОЛЛИ - МОЛЛИ [320 kbps]+ Текст", "ХАРТ_hack", "МОЛЛИ", "ПОШЛАЯ МОЛЛИ")]
+    [InlineData("GENER8ION - STORM starring Yung Lean", "GENER8ION", "STORM", "GENER8ION")]
+    public void ReadsNoisyJamVideos(string video, string channel, string song, string singer)
+    {
+        var (title, artist, _) = MediaSessionService.CleanMetadata(video, channel, null, MusicSource.YouTube);
+        var candidates = MediaSessionService.Candidates(title, artist).Take(4).ToList();
+        Assert.Contains((song, (string?)singer), candidates);
     }
 
     /// <summary>«Roxy Music» — сама группа, а не приписка: название без её имени не трогаем.</summary>

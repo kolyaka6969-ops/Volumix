@@ -53,12 +53,17 @@ public sealed class MediaSessionService : IDisposable
     /// <summary>Шум в названиях роликов YouTube: «(Official Video)», «[MV]», «(Lyrics)» и подобное.</summary>
     private static readonly string[] VideoNoise =
     {
-        "official", "video", "audio", "lyric", "клип", "премьер", "premiere", "официальн", "видео", "текст песни",
-        "visualizer", "hd", "4k", "8k", "m/v", "mv",
+        "official", "video", "audio", "lyric", "клип", "премьер", "premiere", "официальн", "видео", "текст",
+        "visualizer", "hd", "4k", "8k", "m/v", "mv", "kbps", "320", "slowed", "reverb", "sped up", "speed up",
+        "bass boost", "nightcore",
     };
 
     private static readonly Regex Brackets = new(@"[\(\[\{][^\)\]\}]*[\)\]\}]");
-    private static readonly Regex FeatTail = new(@"\s+(?:ft|feat|featuring)\.?\s.*$", RegexOptions.IgnoreCase);
+    /// <summary>Приписка после названия без скобок: «Песня + Текст», «Песня | Lyrics», «Песня - текст песни».</summary>
+    private static readonly Regex NoiseTail = new(
+        @"\s*[+|/•–—-]\s*(?:текст(?:\s+песни)?|с\s+текстом|lyrics?|караоке|karaoke)\s*$", RegexOptions.IgnoreCase);
+    // «starring» — так YouTube-каналы пишут гостя в клипах: «STORM starring Yung Lean»
+    private static readonly Regex FeatTail = new(@"\s+(?:ft|feat|featuring|starring)\.?\s.*$", RegexOptions.IgnoreCase);
 
     private readonly Dispatcher _dispatcher;
     private readonly BrowserMusicDetector _browser = new();
@@ -589,7 +594,8 @@ public sealed class MediaSessionService : IDisposable
     internal static string StripVideoNoise(string title)
     {
         var cleaned = Brackets.Replace(title, match => HasVideoNoise(match.Value) ? " " : match.Value);
-        cleaned = Regex.Replace(cleaned, @"\s{2,}", " ").Trim(' ', '-', '—', '–', '|');
+        cleaned = NoiseTail.Replace(cleaned, "");
+        cleaned = Regex.Replace(cleaned, @"\s{2,}", " ").Trim(' ', '-', '—', '–', '|', '+');
         return cleaned.Length == 0 ? title.Trim() : cleaned;
     }
 
