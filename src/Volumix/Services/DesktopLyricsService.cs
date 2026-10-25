@@ -35,6 +35,8 @@ public sealed class DesktopLyricsService : IDisposable
     private NowPlaying? _musicTrack;
     private bool _enabled;
     private bool _failed;
+    private double _marqueeSpeed = AppSettings.DefaultMarqueeSpeed;
+    private int _marqueeFps = AppSettings.DefaultMarqueeFps;
 
     public DesktopLyricsService(MediaSessionService media, Dispatcher dispatcher)
     {
@@ -58,6 +60,32 @@ public sealed class DesktopLyricsService : IDisposable
                 return;
             _enabled = value;
             Sync();
+        }
+    }
+
+    /// <summary>Скорость бегущей строки названия; окно получает её в своём потоке.</summary>
+    public double MarqueeSpeed
+    {
+        get => _marqueeSpeed;
+        set
+        {
+            if (_marqueeSpeed == value)
+                return;
+            _marqueeSpeed = value;
+            Post(() => _view!.MarqueeSpeed = value);
+        }
+    }
+
+    /// <summary>Кадров в секунду у бегущей строки названия.</summary>
+    public int MarqueeFps
+    {
+        get => _marqueeFps;
+        set
+        {
+            if (_marqueeFps == value)
+                return;
+            _marqueeFps = value;
+            Post(() => _view!.MarqueeFps = value);
         }
     }
 
@@ -211,7 +239,7 @@ public sealed class DesktopLyricsService : IDisposable
                     App.LogError(e.Exception);
                     e.Handled = true;
                 };
-                _view = new DesktopLyricsView();
+                _view = new DesktopLyricsView { MarqueeSpeed = _marqueeSpeed, MarqueeFps = _marqueeFps };
                 _layer = new DesktopLayer(_view);
                 _desktop = dispatcher;
             }

@@ -346,6 +346,81 @@ public class LyricsTests
         view.Stop();
     }
 
+    /// <summary>Скорость из настроек меняет прокрутку, в том числе посреди пути.</summary>
+    [Fact]
+    public void MarqueeSpeedIsAdjustable()
+    {
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try { CheckMarqueeSpeed(); }
+            catch (Exception e) { error = e; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        Assert.Null(error);
+    }
+
+    private static void CheckMarqueeSpeed()
+    {
+        // Сколько уехало за полторы секунды после начала прокрутки
+        double Shift(double speed, double? switchTo = null)
+        {
+            var view = new DesktopLyricsView { MarqueeSpeed = speed };
+            var window = new Window
+            {
+                Content = view, Width = 1536, Height = 864, Left = -20000, Top = -20000,
+                WindowStyle = WindowStyle.None, ShowInTaskbar = false, ShowActivated = false,
+            };
+            window.Show();
+            view.ShowTrack(new NowPlaying("Nowadays (feat. Landon Cube)", "Lil Skies", null, null, true,
+                TimeSpan.Zero, DateTimeOffset.Now, TimeSpan.FromSeconds(200)));
+            for (int i = 0; i < 80 && view.TitleShift.X > -0.01; i++)
+                Pump(0.1);
+            if (switchTo is { } fast)
+                view.MarqueeSpeed = fast;
+            Pump(1.5);
+            double x = -view.TitleShift.X;
+            window.Close();
+            view.Stop();
+            return x;
+        }
+
+        double slow = Shift(5), fast = Shift(100), switched = Shift(5, 100);
+        Assert.True(fast > 50, $"быстрая строка уехала на {fast:N1}");
+        Assert.True(slow < fast / 5, $"медленная {slow:N1}, быстрая {fast:N1}");
+        Assert.True(switched > 50, $"после смены скорости уехала на {switched:N1}");
+
+        // Сколько раз за секунду прокрутки строка сдвинулась — столько кадров анимации
+        int Frames(int fps)
+        {
+            var view = new DesktopLyricsView { MarqueeSpeed = 20, MarqueeFps = fps };
+            var window = new Window
+            {
+                Content = view, Width = 1536, Height = 864, Left = -20000, Top = -20000,
+                WindowStyle = WindowStyle.None, ShowInTaskbar = false, ShowActivated = false,
+            };
+            window.Show();
+            view.ShowTrack(new NowPlaying("Nowadays (feat. Landon Cube) Remix Edition", "Lil Skies", null, null, true,
+                TimeSpan.Zero, DateTimeOffset.Now, TimeSpan.FromSeconds(200)));
+            for (int i = 0; i < 80 && view.TitleShift.X > -0.01; i++)
+                Pump(0.1);
+            var seen = new HashSet<double>();
+            EventHandler sample = (_, _) => seen.Add(view.TitleShift.X);
+            System.Windows.Media.CompositionTarget.Rendering += sample;
+            Pump(1);
+            System.Windows.Media.CompositionTarget.Rendering -= sample;
+            window.Close();
+            view.Stop();
+            return seen.Count;
+        }
+
+        int low = Frames(15), high = Frames(60);
+        Assert.True(low <= 20, $"при 15 FPS сдвигов за секунду: {low}");
+        Assert.True(high > low * 2, $"15 FPS — {low} сдвигов, 60 FPS — {high}");
+    }
+
     private static void Pump(double seconds)
     {
         var frame = new DispatcherFrame();

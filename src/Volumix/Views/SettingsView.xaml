@@ -95,6 +95,50 @@
             </Grid>
         </Border>
 
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="44" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE8E4;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Скорость бегущей строки" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="Как быстро уезжает длинное название песни на рабочем столе. По умолчанию 22" />
+                </StackPanel>
+                <Slider Grid.Column="2" Width="170" Minimum="5" Maximum="100" TickFrequency="1"
+                        IsSnapToTickEnabled="True" IsMoveToPointEnabled="True" VerticalAlignment="Center"
+                        Value="{Binding MarqueeSpeed}" />
+                <TextBlock Grid.Column="3" Style="{StaticResource Body}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                           Text="{Binding MarqueeSpeed}" />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="44" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE9D9;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Кадров в секунду у бегущей строки" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="Больше — плавнее, но выше частоты монитора не бывает. Кадры рисуются, только пока строка едет. По умолчанию 60" />
+                </StackPanel>
+                <Slider Grid.Column="2" Width="170" Minimum="15" Maximum="240" TickFrequency="5"
+                        IsSnapToTickEnabled="True" IsMoveToPointEnabled="True" VerticalAlignment="Center"
+                        Value="{Binding MarqueeFps}" />
+                <TextBlock Grid.Column="3" Style="{StaticResource Body}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                           Text="{Binding MarqueeFps}" />
+            </Grid>
+        </Border>
+
         <TextBlock Style="{StaticResource SectionHeader}" Text="Громкость" />
 
         <Border Style="{StaticResource Card}">
@@ -150,29 +194,6 @@
                 </StackPanel>
                 <ComboBox Grid.Column="2" Width="180" ItemsSource="{x:Static vm:SettingsViewModel.Themes}"
                           DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding Theme}" />
-            </Grid>
-        </Border>
-
-        <Border Style="{StaticResource Card}">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="40" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" VerticalAlignment="Top"
-                           Margin="0,2,0,0" Text="&#xE8BD;" />
-                <StackPanel Grid.Column="1">
-                    <TextBlock Style="{StaticResource Body}" Text="Что можно сказать" Margin="0,0,0,6" />
-                    <TextBlock Style="{StaticResource Caption}" LineHeight="20">
-                        <Run FontWeight="SemiBold">Громкость:</Run> «громкость сорок», «спотифай на пятьдесят», «дискорд потише»,
-                        «хром громче на двадцать», «сделай это окно тише»<LineBreak />
-                        <Run FontWeight="SemiBold">Звук:</Run> «выключи звук», «заглуши телеграм», «включи звук в дискорде»<LineBreak />
-                        <Run FontWeight="SemiBold">Устройства:</Run> «переключи на наушники», «следующее устройство»<LineBreak />
-                        <Run FontWeight="SemiBold">Настройки:</Run> «тёмная тема», «включи автозапуск», «шаг громкости пять»,
-                        «выключи индикатор», «сворачивать в трей»<LineBreak />
-                        <Run FontWeight="SemiBold">Окна:</Run> «открой микшер», «открой настройки», «покажи горячие клавиши», «закрой»
-                    </TextBlock>
-                </StackPanel>
             </Grid>
         </Border>
 

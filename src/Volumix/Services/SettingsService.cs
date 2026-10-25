@@ -38,6 +38,19 @@ public sealed class AppSettings
     public bool MediaButtons { get; set; } = true;
     /// <summary>Песня и её текст на рабочем столе вместо обоев, пока играет песня.</summary>
     public bool DesktopLyrics { get; set; }
+    /// <summary>Скорость бегущей строки длинного названия на обоях, точек макета 1920×1080 в секунду.</summary>
+    public int MarqueeSpeed { get; set; } = DefaultMarqueeSpeed;
+
+    public const int DefaultMarqueeSpeed = 22;
+    public const int MinMarqueeSpeed = 5;
+    public const int MaxMarqueeSpeed = 100;
+
+    /// <summary>Кадров в секунду у бегущей строки. Выше частоты монитора не бывает: лишнее WPF не рисует.</summary>
+    public int MarqueeFps { get; set; } = DefaultMarqueeFps;
+
+    public const int DefaultMarqueeFps = 60;
+    public const int MinMarqueeFps = 15;
+    public const int MaxMarqueeFps = 240;
     /// <summary>Откуда брать песню: Spotify, Яндекс Музыка (в том числе в браузере) или и то, и другое.</summary>
     public MusicSourceMode Source { get; set; } = MusicSourceMode.Auto;
     /// <summary>Версия формата настроек, для добавления новых значений по умолчанию старым пользователям.</summary>

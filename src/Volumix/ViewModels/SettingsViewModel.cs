@@ -109,6 +109,32 @@ public sealed class SettingsViewModel : ObservableObject
         set { if (S.DesktopLyrics == value) return; S.DesktopLyrics = value; Save(); OnPropertyChanged(); }
     }
 
+    public int MarqueeSpeed
+    {
+        get => Math.Clamp(S.MarqueeSpeed, AppSettings.MinMarqueeSpeed, AppSettings.MaxMarqueeSpeed);
+        set
+        {
+            value = Math.Clamp(value, AppSettings.MinMarqueeSpeed, AppSettings.MaxMarqueeSpeed);
+            if (S.MarqueeSpeed == value) return;
+            S.MarqueeSpeed = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
+    public int MarqueeFps
+    {
+        get => Math.Clamp(S.MarqueeFps, AppSettings.MinMarqueeFps, AppSettings.MaxMarqueeFps);
+        set
+        {
+            value = Math.Clamp(value, AppSettings.MinMarqueeFps, AppSettings.MaxMarqueeFps);
+            if (S.MarqueeFps == value) return;
+            S.MarqueeFps = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
     public MusicSourceMode Source
     {
         get => S.Source;

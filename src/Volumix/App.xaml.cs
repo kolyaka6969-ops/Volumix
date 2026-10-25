@@ -73,13 +73,24 @@ public partial class App : Application
         SettingsVm = new SettingsViewModel(_hotkeys, Mixer);
         _media = new MediaSessionService(Dispatcher) { Mode = SettingsVm.Source };
         _tray = new TrayService(this, Mixer, SettingsVm, _media);
-        _desktopLyrics = new DesktopLyricsService(_media, Dispatcher) { Enabled = SettingsVm.DesktopLyrics };
+        _desktopLyrics = new DesktopLyricsService(_media, Dispatcher)
+        {
+            MarqueeSpeed = SettingsVm.MarqueeSpeed,
+            MarqueeFps = SettingsVm.MarqueeFps,
+            Enabled = SettingsVm.DesktopLyrics,
+        };
         SettingsVm.PropertyChanged += (_, args) =>
         {
             switch (args.PropertyName)
             {
                 case nameof(SettingsViewModel.DesktopLyrics):
                     _desktopLyrics.Enabled = SettingsVm.DesktopLyrics;
+                    break;
+                case nameof(SettingsViewModel.MarqueeSpeed):
+                    _desktopLyrics.MarqueeSpeed = SettingsVm.MarqueeSpeed;
+                    break;
+                case nameof(SettingsViewModel.MarqueeFps):
+                    _desktopLyrics.MarqueeFps = SettingsVm.MarqueeFps;
                     break;
                 case nameof(SettingsViewModel.Source):
                     _media.Mode = SettingsVm.Source;

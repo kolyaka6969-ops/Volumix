@@ -47,6 +47,28 @@ public partial class DesktopLyricsView : UserControl
         };
     }
 
+    /// <summary>Скорость бегущей строки названия и исполнителя, точек макета 1920×1080 в секунду.</summary>
+    public double MarqueeSpeed
+    {
+        get => _titleMarquee.Speed;
+        set
+        {
+            _titleMarquee.Speed = value;
+            _artistMarquee.Speed = value;
+        }
+    }
+
+    /// <summary>Кадров в секунду у бегущей строки.</summary>
+    public int MarqueeFps
+    {
+        get => _titleMarquee.Fps;
+        set
+        {
+            _titleMarquee.Fps = value;
+            _artistMarquee.Fps = value;
+        }
+    }
+
     public void ShowTrack(NowPlaying track)
     {
         var old = _track;
@@ -126,8 +148,6 @@ public partial class DesktopLyricsView : UserControl
     /// </summary>
     private sealed class Marquee
     {
-        /// <summary>Скорость в точках макета 1920×1080.</summary>
-        private const double Speed = 22;
         private static readonly TimeSpan StartPause = TimeSpan.FromSeconds(2.5);
         private static readonly TimeSpan EndPause = TimeSpan.FromSeconds(1.5);
 
@@ -147,6 +167,45 @@ public partial class DesktopLyricsView : UserControl
         /// прежнего длинного названия «оживала» у нового короткого и прижимала его к правому краю.
         /// </summary>
         private int _generation;
+        private double _speed = AppSettings.DefaultMarqueeSpeed;
+        private bool _moving;
+        private int _fps = AppSettings.DefaultMarqueeFps;
+
+        /// <summary>Кадров в секунду. Меняется и посреди прокрутки — с текущего места.</summary>
+        public int Fps
+        {
+            get => _fps;
+            set
+            {
+                value = Math.Clamp(value, AppSettings.MinMarqueeFps, AppSettings.MaxMarqueeFps);
+                if (_fps == value)
+                    return;
+                _fps = value;
+                if (_moving)
+                {
+                    _generation++;
+                    Scroll();
+                }
+            }
+        }
+
+        /// <summary>Скорость в точках макета 1920×1080 в секунду. Меняется и посреди прокрутки — с текущего места.</summary>
+        public double Speed
+        {
+            get => _speed;
+            set
+            {
+                value = Math.Clamp(value, AppSettings.MinMarqueeSpeed, AppSettings.MaxMarqueeSpeed);
+                if (_speed == value)
+                    return;
+                _speed = value;
+                if (_moving)
+                {
+                    _generation++; // Completed прежней анимации больше не наш
+                    Scroll();
+                }
+            }
+        }
 
         public Marquee(FrameworkElement text, TranslateTransform shift)
         {
@@ -182,6 +241,7 @@ public partial class DesktopLyricsView : UserControl
         {
             _pause.Stop();
             _generation++;
+            _moving = false;
             _shift.BeginAnimation(TranslateTransform.XProperty, null);
             _shift.X = 0;
             _forward = true;
@@ -224,21 +284,27 @@ public partial class DesktopLyricsView : UserControl
             if (!_running || _overflow <= 1)
                 return;
             int generation = _generation;
-            var animation = new DoubleAnimation(_forward ? -_overflow : 0, TimeSpan.FromSeconds(Math.Max(1, _overflow / Speed)))
+            double target = _forward ? -_overflow : 0;
+            // Путь считается от текущего места: при смене скорости посреди прокрутки остаётся только хвост
+            double distance = Math.Abs(target - _shift.X);
+            var animation = new DoubleAnimation(target, TimeSpan.FromSeconds(Math.Max(0.5, distance / _speed)))
             {
                 EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
             };
-            // При 30 кадрах медленная строка заметно дёргалась; анимация идёт только в пути, в паузах кадров нет
-            Timeline.SetDesiredFrameRate(animation, 60);
+            // Частота из настроек (по умолчанию 60: при 30 медленная строка заметно дёргалась).
+            // Анимация идёт только в пути, в паузах кадров нет
+            Timeline.SetDesiredFrameRate(animation, _fps);
             animation.Completed += (_, _) =>
             {
                 if (!_running || generation != _generation)
                     return;
+                _moving = false;
                 _forward = !_forward;
                 SetMask(_forward ? FadeRight : FadeLeft);
                 Wait(_forward ? StartPause : EndPause);
             };
             SetMask(FadeBoth);
+            _moving = true;
             _shift.BeginAnimation(TranslateTransform.XProperty, animation);
         }
     }
