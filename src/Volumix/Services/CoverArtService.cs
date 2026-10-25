@@ -16,7 +16,8 @@ internal static class CoverArtService
 {
     private const int CacheLimit = 200;
 
-    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(5);
+    // Три каталога по очереди на каждое прочтение — Deezer, Apple Music и Genius
+    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(10);
     private static readonly HttpClient Http = CreateHttp();
     private static readonly Dictionary<string, byte[]?> Cache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -29,28 +30,38 @@ internal static class CoverArtService
     /// бывают перемешаны, и ждать полный таймаут на каждом варианте слишком долго.
     /// </summary>
     public static async Task<byte[]?> FindAsync(
+        IReadOnlyList<(string Title, string? Artist)> candidates, CancellationToken ct = default) =>
+        (await LookUpAsync(candidates, ct)).Art;
+
+    /// <summary>
+    /// То же, но ещё и сообщает, был ли поиск неполным (каталог не ответил, не хватило времени):
+    /// тогда пустой ответ не значит «обложки нет», и искать стоит ещё раз.
+    /// </summary>
+    public static async Task<(byte[]? Art, bool Failed)> LookUpAsync(
         IReadOnlyList<(string Title, string? Artist)> candidates, CancellationToken ct = default)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(Budget);
+        bool failed = false;
         foreach (var (title, artist) in candidates)
         {
             if (cts.IsCancellationRequested)
-                break;
-            var art = await FindOneAsync(title, artist, cts.Token);
+                return (null, true);
+            var (art, oneFailed) = await FindOneAsync(title, artist, cts.Token);
             if (art != null)
-                return art;
+                return (art, false);
+            failed |= oneFailed;
         }
-        return null;
+        return (null, failed || cts.IsCancellationRequested);
     }
 
-    private static async Task<byte[]?> FindOneAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, bool Failed)> FindOneAsync(string title, string? artist, CancellationToken ct)
     {
         var key = $"{Norm(artist)}\n{Norm(title)}";
         lock (Cache)
         {
             if (Cache.TryGetValue(key, out var cached))
-                return cached;
+                return (cached, false);
         }
 
         byte[]? art = null;
@@ -72,6 +83,18 @@ internal static class CoverArtService
             }
             catch (Exception)
             {
+                // Apple Music не ответил — остаётся Genius
+                failed = true;
+            }
+        }
+        if (art == null && !ct.IsCancellationRequested)
+        {
+            try
+            {
+                art = await FromGeniusAsync(title, artist, ct);
+            }
+            catch (Exception)
+            {
                 // Обложки не будет: покажем то, что дал браузер.
                 failed = true;
             }
@@ -88,7 +111,7 @@ internal static class CoverArtService
                 Cache[key] = art;
             }
         }
-        return art;
+        return (art, art == null && (failed || ct.IsCancellationRequested));
     }
 
     private static HttpClient CreateHttp()
@@ -145,6 +168,42 @@ internal static class CoverArtService
             // 100x100bb.jpg — превью; тот же файл в 600x600bb.jpg заметно приятнее на обоях.
             bestUrl = art.Replace("100x100bb", "600x600bb", StringComparison.OrdinalIgnoreCase);
         }
+        return bestUrl == null ? null : await DownloadAsync(bestUrl, ct);
+    }
+
+    /// <summary>
+    /// Genius: обложки есть почти у всех песен, у которых там есть текст, — в том числе у тех, что не продаются
+    /// в Deezer и Apple Music. Как и с текстом, берём только песню с тем же названием и исполнителем.
+    /// </summary>
+    private static async Task<byte[]?> FromGeniusAsync(string title, string? artist, CancellationToken ct)
+    {
+        var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
+        var json = await Http.GetStringAsync($"https://genius.com/api/search/song?q={query}&per_page=5", ct);
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("response", out var response) ||
+            !response.TryGetProperty("sections", out var sections) || sections.GetArrayLength() == 0 ||
+            !sections[0].TryGetProperty("hits", out var hits))
+            return null;
+
+        var best = 0;
+        string? bestUrl = null;
+        foreach (var hit in hits.EnumerateArray())
+        {
+            if (!hit.TryGetProperty("result", out var result))
+                continue;
+            var foundArtist = Str(result, "artist_names") ??
+                              (result.TryGetProperty("primary_artist", out var pa) ? Str(pa, "name") : null);
+            var score = Score(title, artist, Str(result, "title"), foundArtist);
+            var art = Str(result, "song_art_image_url");
+            // У песен без своей обложки Genius подставляет общую заглушку
+            if (score <= best || art == null || art.Contains("default_cover", StringComparison.OrdinalIgnoreCase))
+                continue;
+            best = score;
+            bestUrl = art;
+        }
+        // Совпало только название — у известных названий («Numb», «Home») это почти всегда другая песня
+        if (best < (string.IsNullOrWhiteSpace(artist) ? 3 : 4))
+            return null;
         return bestUrl == null ? null : await DownloadAsync(bestUrl, ct);
     }
 

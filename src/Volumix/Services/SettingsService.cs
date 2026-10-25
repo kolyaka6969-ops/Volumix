@@ -51,6 +51,8 @@ public sealed class AppSettings
     public const int DefaultMarqueeFps = 60;
     public const int MinMarqueeFps = 15;
     public const int MaxMarqueeFps = 240;
+    /// <summary>Кнопки «назад», «играть/пауза», «вперёд» на обоях под полосой прогресса.</summary>
+    public bool DesktopControls { get; set; } = true;
     /// <summary>На каких мониторах обои с песней: <see cref="AllScreens"/>, <see cref="PrimaryScreen"/> или имя устройства.</summary>
     public string DesktopScreen { get; set; } = AllScreens;
 

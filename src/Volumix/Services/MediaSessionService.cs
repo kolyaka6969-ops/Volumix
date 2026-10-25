@@ -86,10 +86,19 @@ public sealed class MediaSessionService : IDisposable
     private int _refreshVersion;
     private bool _acceptAnyTimeline = true;
     private bool _disposed;
+    /// <summary>Каталоги обложек не ответили (лимит запросов, таймаут) — спросим ещё раз.</summary>
+    private static readonly TimeSpan CoverRetry = TimeSpan.FromSeconds(30);
+    private readonly DispatcherTimer _coverRetry;
 
     public MediaSessionService(Dispatcher dispatcher)
     {
         _dispatcher = dispatcher;
+        _coverRetry = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = CoverRetry };
+        _coverRetry.Tick += (_, _) =>
+        {
+            _coverRetry.Stop();
+            _ = RefreshAsync();
+        };
         _browserTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = BrowserTick };
         // Браузер не сообщает о смене вкладки никаким событием — приходится заглядывать самим.
         // Таймер работает, только пока в браузере есть медиа-сеанс (см. UpdateWatch).
@@ -277,6 +286,10 @@ public sealed class MediaSessionService : IDisposable
                 return (null, MusicSource.None);
 
             var playingNow = candidates.Where(c => c.Playing).ToList();
+            // Ничего не играет — остаёмся на том, что играло последним: поставили YouTube на паузу,
+            // и «играть» должно продолжить YouTube, а не Spotify
+            if (playingNow.Count == 0 && candidates.FirstOrDefault(c => ReferenceEquals(c.Session, _session)) is { Session: not null } last)
+                return (last.Session, last.Kind);
             // Приостановленную вкладку браузера берём, только если она уже играла у нас: Chrome держит сеанс
             // от любого видео и после закрытия ролика, и старый заголовок иначе подменил бы песню.
             var pool = playingNow.Count > 0
@@ -528,10 +541,15 @@ public sealed class MediaSessionService : IDisposable
             (_source == MusicSource.YouTube || (browser && Cover == null) || (Cover != null && PixelSize(Cover) < SharpCover)))
         {
             var variants = Candidates(title, artist).Take(4).ToList();
-            var art = await CoverArtService.FindAsync(variants);
+            var (art, failed) = await CoverArtService.LookUpAsync(variants);
             if (_disposed || session != _session || version != _refreshVersion)
                 return;
-            _catalogKey = key;
+            // Каталоги не ответили — трек не считаем проверенным, иначе он остался бы без обложки до конца.
+            // За долгий микс на YouTube запросов набирается много, и лимиты каталогов срабатывают
+            if (failed)
+                _coverRetry.Start();
+            else
+                _catalogKey = key;
             // Не нашлось в каталогах — остаётся то, что прислал плеер
             if (art != null || _source == MusicSource.YouTube)
             {
@@ -851,8 +869,46 @@ public sealed class MediaSessionService : IDisposable
     }
 
     public void TogglePlayPause() => Run(s => s.TryTogglePlayPauseAsync().AsTask());
-    public void Next() => Run(s => s.TrySkipNextAsync().AsTask());
-    public void Previous() => Run(s => s.TrySkipPreviousAsync().AsTask());
+
+    /// <summary>
+    /// Следующий трек. У обычного ролика YouTube Chrome не даёт «вперёд» (только в плейлистах и миксах), зато даёт
+    /// перемотку: доматываем ролик до конца, и YouTube сам включает следующий.
+    /// </summary>
+    public void Next() => Run(async s =>
+    {
+        var info = s.GetPlaybackInfo();
+        if (info.Controls.IsNextEnabled || !info.Controls.IsPlaybackPositionEnabled)
+            return await s.TrySkipNextAsync();
+        var t = s.GetTimelineProperties();
+        if (t.EndTime <= t.StartTime)
+            return false;
+        bool done = await s.TryChangePlaybackPositionAsync((t.EndTime - TimeSpan.FromSeconds(0.3)).Ticks);
+        if (info.PlaybackStatus != GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+            await s.TryPlayAsync(); // на паузе ролик так и стоял бы в самом конце
+        return done;
+    });
+
+    /// <summary>Предыдущий трек; где «назад» нет (обычный ролик YouTube) — к началу трека.</summary>
+    public void Previous() => Run(async s =>
+    {
+        var info = s.GetPlaybackInfo();
+        if (info.Controls.IsPreviousEnabled || !info.Controls.IsPlaybackPositionEnabled)
+            return await s.TrySkipPreviousAsync();
+        return await s.TryChangePlaybackPositionAsync(s.GetTimelineProperties().StartTime.Ticks);
+    });
+
+    /// <summary>Перемотка. Позицию показываем сразу, не дожидаясь, пока плеер подтвердит.</summary>
+    public void Seek(TimeSpan position)
+    {
+        if (_session == null || Duration <= TimeSpan.Zero)
+            return;
+        position = position < TimeSpan.Zero ? TimeSpan.Zero : position > Duration ? Duration : position;
+        Position = position;
+        PositionTime = DateTimeOffset.Now;
+        _acceptAnyTimeline = true; // ответ плеера о новой позиции может прийти со временем чуть раньше нашего
+        TimelineChanged?.Invoke();
+        Run(s => s.TryChangePlaybackPositionAsync((s.GetTimelineProperties().StartTime + position).Ticks).AsTask());
+    }
 
     private async void Run(Func<GlobalSystemMediaTransportControlsSession, Task<bool>> action)
     {
@@ -866,6 +922,7 @@ public sealed class MediaSessionService : IDisposable
     {
         _disposed = true;
         _browserTimer.Stop();
+        _coverRetry.Stop();
         Unsubscribe();
         UnwatchAll();
         _session = null;

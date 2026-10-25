@@ -19,6 +19,7 @@
         <Style TargetType="Rectangle" />
         <Style TargetType="Viewbox" />
         <Style TargetType="Canvas" />
+        <Style TargetType="Ellipse" />
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
     </UserControl.Resources>
 
@@ -96,21 +97,63 @@
                     </Canvas>
                     <TextBlock x:Name="AlbumText" Margin="0,4,0,0" FontSize="22" Opacity="0.5" TextTrimming="CharacterEllipsis" />
 
-                    <Grid Margin="0,34,0,0" Width="440" HorizontalAlignment="Left">
-                        <Border Height="6" CornerRadius="3" Background="#3DFFFFFF" ClipToBounds="True">
+                    <!-- Полоса тонкая, а попадать по ней мышью удобнее по высокой области вокруг: её щелчки ловит DesktopPointer -->
+                    <Grid x:Name="ProgressArea" Margin="0,22,0,0" Width="440" Height="30" HorizontalAlignment="Left" Background="Transparent">
+                        <Border Height="6" CornerRadius="3" Background="#3DFFFFFF" ClipToBounds="True" VerticalAlignment="Center">
                             <Border CornerRadius="3" Background="#F2FFFFFF" RenderTransformOrigin="0,0.5">
                                 <Border.RenderTransform>
                                     <ScaleTransform x:Name="ProgressScale" ScaleX="0" />
                                 </Border.RenderTransform>
                             </Border>
                         </Border>
+                        <!-- Кружок на конце полосы, как в Spotify: виден, пока мышь над полосой -->
+                        <Ellipse x:Name="ProgressKnob" Width="18" Height="18" Fill="White" HorizontalAlignment="Left"
+                                 VerticalAlignment="Center" Visibility="Collapsed">
+                            <Ellipse.RenderTransform>
+                                <TranslateTransform x:Name="KnobShift" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
                     </Grid>
-                    <Grid Margin="0,12,0,0" Width="440" HorizontalAlignment="Left" TextElement.FontSize="20">
+                    <Grid Width="440" HorizontalAlignment="Left" TextElement.FontSize="20">
                         <TextBlock x:Name="ElapsedText" Opacity="0.6" HorizontalAlignment="Left" />
-                        <TextBlock x:Name="PauseGlyph" FontFamily="{StaticResource IconFont}" Text="&#xE769;" FontSize="22"
-                                   Opacity="0.7" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
                         <TextBlock x:Name="DurationText" Opacity="0.6" HorizontalAlignment="Right" />
                     </Grid>
+
+                    <!-- Кнопки как в Spotify. Окно лежит под значками рабочего стола, и щелчки до него не доходят —
+                         их ловит DesktopLyricsService и спрашивает ControlAt -->
+                    <StackPanel x:Name="Controls" Orientation="Horizontal" Margin="0,22,0,0" Width="440" HorizontalAlignment="Left">
+                        <StackPanel.Resources>
+                            <Style TargetType="Grid">
+                                <Setter Property="Width" Value="72" />
+                                <Setter Property="Height" Value="72" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+                            </Style>
+                        </StackPanel.Resources>
+                        <Grid x:Name="PreviousButton" Margin="84,0,0,0" Opacity="0.75">
+                            <Grid.RenderTransform>
+                                <ScaleTransform />
+                            </Grid.RenderTransform>
+                            <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xF8AC;" FontSize="30"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Grid>
+                        <Grid x:Name="PlayButton" Margin="28,0">
+                            <Grid.RenderTransform>
+                                <ScaleTransform />
+                            </Grid.RenderTransform>
+                            <Ellipse Fill="White" />
+                            <!-- У треугольника «играть» центр тяжести левее середины — чуть сдвигаем -->
+                            <TextBlock x:Name="PlayGlyph" FontFamily="{StaticResource IconFont}" Text="&#xF5B0;" FontSize="28"
+                                       Foreground="Black" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="3,0,0,0" />
+                        </Grid>
+                        <Grid x:Name="NextButton" Opacity="0.75">
+                            <Grid.RenderTransform>
+                                <ScaleTransform />
+                            </Grid.RenderTransform>
+                            <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xF8AD;" FontSize="30"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
                 </StackPanel>
 
                 <!-- Текст песни: текущая строка стоит на одном уровне, остальные плавно уезжают -->

@@ -109,6 +109,12 @@ public sealed class SettingsViewModel : ObservableObject
         set { if (S.DesktopLyrics == value) return; S.DesktopLyrics = value; Save(); OnPropertyChanged(); }
     }
 
+    public bool DesktopControls
+    {
+        get => S.DesktopControls;
+        set { if (S.DesktopControls == value) return; S.DesktopControls = value; Save(); OnPropertyChanged(); }
+    }
+
     public int MarqueeSpeed
     {
         get => Math.Clamp(S.MarqueeSpeed, AppSettings.MinMarqueeSpeed, AppSettings.MaxMarqueeSpeed);

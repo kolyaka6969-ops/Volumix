@@ -23,8 +23,17 @@ public sealed class DesktopLyricsService : IDisposable
     /// </summary>
     private static readonly TimeSpan FetchDelay = TimeSpan.FromMilliseconds(700);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(1);
+    /// <summary>
+    /// Сколько держать заглушку, пока новый ролик YouTube проверяется. Проверка — поиск текста — занимает секунду-две,
+    /// а Chrome при смене ролика ещё и на пару секунд выдаёт его за трек другого сайта.
+    /// </summary>
+    private static readonly TimeSpan HoldLimit = TimeSpan.FromSeconds(8);
+
+    /// <summary>Как часто пересчитываем, где на экране кнопки: окно могли пересоздать, экран — сменить.</summary>
+    private static readonly TimeSpan TargetsInterval = TimeSpan.FromSeconds(1);
 
     private readonly MediaSessionService _media;
+    private readonly Dispatcher _main;
     private readonly DispatcherTimer _fetchTimer;
     private Dispatcher? _desktop;
     private CancellationTokenSource? _fetch;
@@ -40,19 +49,51 @@ public sealed class DesktopLyricsService : IDisposable
     private bool _showingYouTube;
     private bool _enabled;
     private bool _failed;
+    // Обои сейчас на экране (с песней или заглушкой) — так считает поток интерфейса
+    private bool _visible;
+    // Заглушка уже отстояла своё — больше не ждём, прячем
+    private bool _holdExpired;
+    private readonly DispatcherTimer _holdTimer;
     private double _marqueeSpeed = AppSettings.DefaultMarqueeSpeed;
     private int _marqueeFps = AppSettings.DefaultMarqueeFps;
     private string _screen = AppSettings.AllScreens;
+    private bool _controls = true;
 
     // Живут в потоке окон, трогать только через Post
     private readonly List<ScreenView> _screens = new();
     private NowPlaying? _shownTrack;
     private (string Key, Lyrics Lyrics)? _shownLyrics;
     private bool _shown;
+    private readonly DesktopPointer _pointer = new();
+    private DispatcherTimer? _targetsTimer;
 
     public DesktopLyricsService(MediaSessionService media, Dispatcher dispatcher)
     {
         _media = media;
+        _main = dispatcher;
+        _pointer.Pointer += (target, pressed, fraction) => Post(() =>
+        {
+            foreach (var screen in _screens)
+                screen.View.SetPointer(target is { } t && t.Owner == screen.View ? t.Control : null, pressed, fraction);
+        });
+        _pointer.Click += (target, fraction) => _main.BeginInvoke(() =>
+        {
+            switch (target.Control)
+            {
+                case DesktopControl.Previous: _media.Previous(); break;
+                case DesktopControl.PlayPause: _media.TogglePlayPause(); break;
+                case DesktopControl.Next: _media.Next(); break;
+                case DesktopControl.Seek: _media.Seek(_media.Duration * fraction); break;
+            }
+        });
+        _holdTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = HoldLimit };
+        _holdTimer.Tick += (_, _) =>
+        {
+            // Трек так и не подтвердился — значит, это не песня: убираем заглушку
+            _holdTimer.Stop();
+            _holdExpired = true;
+            Sync();
+        };
         _fetchTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher);
         _fetchTimer.Tick += (_, _) =>
         {
@@ -101,6 +142,23 @@ public sealed class DesktopLyricsService : IDisposable
         }
     }
 
+    /// <summary>Кнопки «назад», «играть/пауза», «вперёд» на обоях.</summary>
+    public bool Controls
+    {
+        get => _controls;
+        set
+        {
+            if (_controls == value)
+                return;
+            _controls = value;
+            Post(() =>
+            {
+                _screens.ForEach(s => s.View.ControlsVisible = value);
+                UpdatePointer();
+            });
+        }
+    }
+
     /// <summary>На каких мониторах показывать: все, основной или один по имени устройства (\\.\DISPLAY2).</summary>
     public string Screen
     {
@@ -131,17 +189,26 @@ public sealed class DesktopLyricsService : IDisposable
                        (track.Source != MusicSource.YouTube || track.Key == _music || track.Key == _pending || track.Cover != null);
         _showingYouTube = allowed && track!.Source == MusicSource.YouTube;
         var shown = allowed ? Shown(track!) : null;
-        if (track != null || _desktop != null)
+        if (shown != null)
         {
+            _holdTimer.Stop();
+            _holdExpired = false;
+            _visible = true;
             EnsureThread();
-            Post(() =>
-            {
-                if (shown == null)
-                    HideOnDesktop();
-                else
-                    ShowOnDesktop(shown);
-            });
+            Post(() => ShowOnDesktop(shown));
         }
+        // Обои на экране, а следующий трек ещё проверяется (или Chrome на миг потерял сеанс между роликами):
+        // вместо рабочего стола — заглушка, пока трек не подтвердится
+        else if (_enabled && _visible && !_holdExpired && (track == null || track.Source == MusicSource.YouTube))
+        {
+            if (!_holdTimer.IsEnabled)
+            {
+                _holdTimer.Start();
+                Post(PlaceholderOnDesktop);
+            }
+        }
+        else
+            HideNow();
 
         // Длительность входит в ключ: по ней lrclib отличает версии песни
         var key = track == null ? null : $"{track.Key}\n{(int)track.Duration.TotalSeconds}";
@@ -198,7 +265,7 @@ public sealed class DesktopLyricsService : IDisposable
                 {
                     _pending = null;
                     _showingYouTube = false;
-                    Post(HideOnDesktop);
+                    HideNow();
                 }
                 if (failed)
                 {
@@ -225,6 +292,15 @@ public sealed class DesktopLyricsService : IDisposable
         }
     }
 
+    /// <summary>Убрать обои сразу, без заглушки.</summary>
+    private void HideNow()
+    {
+        _holdTimer.Stop();
+        _holdExpired = false;
+        _visible = false;
+        Post(HideOnDesktop);
+    }
+
     /// <summary>Ролик YouTube оказался песней: показываем его на обоях.</summary>
     private void Confirm(NowPlaying track, (string Title, string? Artist)? name, Lyrics lyrics)
     {
@@ -232,6 +308,9 @@ public sealed class DesktopLyricsService : IDisposable
         _musicName = name;
         _pending = null;
         _showingYouTube = true;
+        _holdTimer.Stop();
+        _holdExpired = false;
+        _visible = true;
         // Пока искали текст, плеер мог прислать обложку из каталога и новую позицию — берём свежие
         var current = _media.NowPlaying is { } now && now.Key == track.Key ? now : track;
         var shown = Shown(current);
@@ -327,7 +406,7 @@ public sealed class DesktopLyricsService : IDisposable
         {
             if (_screens.Any(s => s.Device == device))
                 continue;
-            var view = new DesktopLyricsView { MarqueeSpeed = _marqueeSpeed, MarqueeFps = _marqueeFps };
+            var view = new DesktopLyricsView { MarqueeSpeed = _marqueeSpeed, MarqueeFps = _marqueeFps, ControlsVisible = _controls };
             var screen = new ScreenView(device, view, new DesktopLayer(view, device));
             _screens.Add(screen);
             if (!_shown || _shownTrack == null)
@@ -338,7 +417,37 @@ public sealed class DesktopLyricsService : IDisposable
                 view.ShowLyrics(lyrics.Key, lyrics.Lyrics);
             screen.Layer.Visible = true;
         }
+        UpdatePointer();
     }
+
+    /// <summary>Мышь слушаем, только пока обои с кнопками на экране.</summary>
+    private void UpdatePointer()
+    {
+        bool on = _shown && _controls;
+        if (on)
+        {
+            if (_targetsTimer == null)
+            {
+                _targetsTimer = new DispatcherTimer { Interval = TargetsInterval };
+                _targetsTimer.Tick += (_, _) => UpdateTargets();
+            }
+            _targetsTimer.Start();
+            // Окно только что показано и ещё не разложено — кнопки посчитаем после раскладки
+            _desktop?.BeginInvoke(UpdateTargets, DispatcherPriority.Loaded);
+        }
+        else
+        {
+            _targetsTimer?.Stop();
+            _pointer.SetTargets(Array.Empty<DesktopPointer.Target>());
+        }
+        _pointer.Enabled = on;
+    }
+
+    private void UpdateTargets() =>
+        _pointer.SetTargets(_screens
+            .Where(s => s.Layer.Visible)
+            .SelectMany(s => s.View.ControlBounds().Select(c => new DesktopPointer.Target(c.Bounds, s.View, c.Control)))
+            .ToArray());
 
     private void ShowOnDesktop(NowPlaying track)
     {
@@ -351,6 +460,18 @@ public sealed class DesktopLyricsService : IDisposable
             screen.View.ShowTrack(track);
             screen.Layer.Visible = true;
         }
+        UpdatePointer();
+    }
+
+    /// <summary>Заглушка между треками: обои остаются, пока следующий трек проверяется.</summary>
+    private void PlaceholderOnDesktop()
+    {
+        if (!_shown)
+            return;
+        _shownTrack = null;
+        _shownLyrics = null;
+        foreach (var screen in _screens)
+            screen.View.ShowPlaceholder();
     }
 
     private void HideOnDesktop()
@@ -361,6 +482,7 @@ public sealed class DesktopLyricsService : IDisposable
             screen.View.Stop();
             screen.Layer.Visible = false;
         }
+        UpdatePointer();
     }
 
     private void LyricsOnDesktop(string key, Lyrics lyrics)
@@ -386,7 +508,11 @@ public sealed class DesktopLyricsService : IDisposable
         try
         {
             // Окна закрываем в их потоке и дожидаемся: при выходе Explorer должен вернуть обычные обои
-            desktop.Invoke(() => _screens.ForEach(s => s.Layer.Dispose()),
+            desktop.Invoke(() =>
+                {
+                    _pointer.Dispose();
+                    _screens.ForEach(s => s.Layer.Dispose());
+                },
                 DispatcherPriority.Send, CancellationToken.None, TimeSpan.FromSeconds(2));
         }
         catch (Exception) { }
