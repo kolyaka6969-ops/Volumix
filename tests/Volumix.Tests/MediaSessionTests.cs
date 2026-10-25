@@ -181,6 +181,54 @@ public class MediaSessionTests
         Assert.Contains((song, (string?)singer), candidates);
     }
 
+    [Theory]
+    [InlineData("Chainsaw Man - Opening | KICK BACK", "KICK BACK", null)]
+    [InlineData("Demon Slayer - Opening Full 『Gurenge』 by LiSA (Lyrics)", "Gurenge", "LiSA")]
+    [InlineData("TVアニメ「呪術廻戦」第2期「渋谷事変」ノンクレジットOP｜King Gnu「SPECIALZ」", "SPECIALZ", "King Gnu")]
+    [InlineData("Spy x Family Opening - Mixed Nuts by Official HIGE DANdism", "Mixed Nuts", "Official HIGE DANdism")]
+    [InlineData("Naruto Shippuden Opening 16 | Silhouette (HD)", "Silhouette", null)]
+    [InlineData("Tokyo Ghoul OP - Unravel [1080p]", "Unravel", null)]
+    public void ReadsAnimeOpenings(string video, string song, string? singer)
+    {
+        var (title, artist, _) = MediaSessionService.CleanMetadata(video, "Crunchyroll", null, MusicSource.YouTube);
+        Assert.Equal(song, title);
+        Assert.Equal(singer, artist);
+    }
+
+    [Fact]
+    public void ReadsOpeningWithoutSong()
+    {
+        var parsed = AnimeThemeService.Parse(MediaSessionService.VideoTitle("Jujutsu Kaisen - Opening 2 | 4K | 60FPS | Creditless |"));
+        Assert.NotNull(parsed);
+        Assert.Equal(("Jujutsu Kaisen", "OP", 2, (string?)null), (parsed!.Anime, parsed.Kind, parsed.Number, parsed.Song));
+        Assert.True(parsed.Strong);
+
+        var found = new[]
+        {
+            new AnimeThemeService.Anime("Jujutsu Kaisen 2nd Season", new[] { "Jujutsu Kaisen Season 2" }, new[]
+            {
+                new AnimeThemeService.Theme("OP", 1, "Ao no Sumika", "Tatsuya Kitani"),
+                new AnimeThemeService.Theme("OP", 2, "SPECIALZ", "King Gnu"),
+            }),
+        };
+        Assert.Equal(("SPECIALZ", (string?)"King Gnu"), AnimeThemeService.Pick(parsed, found));
+    }
+
+    /// <summary>Обычные песни со словами «Ending», «Opening» и именем «Ed» опенингами не считаем.</summary>
+    [Theory]
+    [InlineData("Mika - Happy Ending", "Happy Ending", "Mika")]
+    [InlineData("Isak Danielson - Ending", "Ending", "Isak Danielson")]
+    [InlineData("Ed Sheeran - Perfect (Official Music Video)", "Perfect", "Ed Sheeran")]
+    public void KeepsSongsAboutEndings(string video, string song, string singer)
+    {
+        var (title, artist, _) = MediaSessionService.CleanMetadata(video, singer, null, MusicSource.YouTube);
+        Assert.Equal(song, title);
+        Assert.Equal(singer, artist);
+        var parsed = AnimeThemeService.Parse(video);
+        // «Mika - Happy Ending» могла бы быть эндингом аниме «Happy» — без совпадения песни в AnimeThemes не верим
+        Assert.Null(parsed == null ? null : AnimeThemeService.Pick(parsed, Array.Empty<AnimeThemeService.Anime>()));
+    }
+
     /// <summary>«Roxy Music» — сама группа, а не приписка: название без её имени не трогаем.</summary>
     [Fact]
     public void KeepsBandNamedMusic()

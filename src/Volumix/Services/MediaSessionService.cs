@@ -55,7 +55,7 @@ public sealed class MediaSessionService : IDisposable
     {
         "official", "video", "audio", "lyric", "клип", "премьер", "premiere", "официальн", "видео", "текст",
         "visualizer", "hd", "4k", "8k", "m/v", "mv", "kbps", "320", "slowed", "reverb", "sped up", "speed up",
-        "bass boost", "nightcore",
+        "bass boost", "nightcore", "full", "creditless", "fps", "1080", "tv size", "romaji", "eng sub",
     };
 
     private static readonly Regex Brackets = new(@"[\(\[\{][^\)\]\}]*[\)\]\}]");
@@ -363,6 +363,13 @@ public sealed class MediaSessionService : IDisposable
             TimelineChanged?.Invoke();
         });
 
+    private async Task RefreshWhenResolvedAsync(string video)
+    {
+        var session = _session;
+        if (await AnimeThemeService.ResolveAsync(video) != null && !_disposed && session == _session)
+            await RefreshAsync();
+    }
+
     private async Task RefreshAsync()
     {
         var session = _session;
@@ -411,7 +418,22 @@ public sealed class MediaSessionService : IDisposable
         }
 
         if (title != null)
+        {
+            var video = _source == MusicSource.YouTube ? VideoTitle(title) : null;
             (title, artist, album) = CleanMetadata(title, artist, album, _source);
+            // Опенинг аниме: чего нет в названии ролика (исполнителя, а то и самой песни), узнаём у AnimeThemes.
+            // Отвечает она секунд по пять — не ждём: пока показываем прочитанное из названия, а с ответом обновимся
+            if (video != null)
+            {
+                if (AnimeThemeService.TryGetResolved(video, out var anime))
+                {
+                    if (anime is { } song)
+                        (title, artist) = song;
+                }
+                else
+                    _ = RefreshWhenResolvedAsync(video);
+            }
+        }
 
         var key = $"{artist}\n{title}\n{album}";
         bool newTrack = key != _coverKey;
@@ -534,18 +556,14 @@ public sealed class MediaSessionService : IDisposable
     internal static (string Title, string? Artist, string? Album) CleanMetadata(
         string title, string? artist, string? album, MusicSource source)
     {
-        title = title.Trim();
-        foreach (var suffix in new[]
-                 {
-                     " — Яндекс Музыка", " | Яндекс Музыка", " - Яндекс Музыка", " — Yandex Music", " | Yandex Music",
-                     " - YouTube", " | YouTube",
-                 })
-            if (title.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-                title = title[..^suffix.Length].Trim();
+        title = WithoutSiteName(title);
 
         if (source is MusicSource.YouTube or MusicSource.YouTubeMusic)
         {
             title = StripVideoNoise(title);
+            // Опенинг аниме: песня и исполнитель внутри названия, а канал — просто тот, кто залил
+            if (source == MusicSource.YouTube && AnimeThemeService.FromTitle(title) is { } anime)
+                return (anime.Title, anime.Artist, album);
             artist = CleanChannel(artist);
         }
 
@@ -589,6 +607,22 @@ public sealed class MediaSessionService : IDisposable
 
         return (title, string.IsNullOrWhiteSpace(artist) ? null : artist, album);
     }
+
+    private static string WithoutSiteName(string title)
+    {
+        title = title.Trim();
+        foreach (var suffix in new[]
+                 {
+                     " — Яндекс Музыка", " | Яндекс Музыка", " - Яндекс Музыка", " — Yandex Music", " | Yandex Music",
+                     " - YouTube", " | YouTube",
+                 })
+            if (title.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                title = title[..^suffix.Length].Trim();
+        return title;
+    }
+
+    /// <summary>Название ролика YouTube без названия сайта и пометок вроде «(Official Video)».</summary>
+    internal static string VideoTitle(string title) => StripVideoNoise(WithoutSiteName(title));
 
     /// <summary>«Кино - Группа крови (Official Video)» → «Кино - Группа крови».</summary>
     internal static string StripVideoNoise(string title)

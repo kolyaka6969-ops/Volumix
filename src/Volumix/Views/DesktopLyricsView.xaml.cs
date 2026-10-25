@@ -151,11 +151,6 @@ public partial class DesktopLyricsView : UserControl
         private static readonly TimeSpan StartPause = TimeSpan.FromSeconds(2.5);
         private static readonly TimeSpan EndPause = TimeSpan.FromSeconds(1.5);
 
-        // Мягкий край там, где текст продолжается: справа в начале, с обеих сторон в пути, слева в конце
-        private static readonly Brush FadeRight = Fade(1, 0);
-        private static readonly Brush FadeBoth = Fade(0, 0);
-        private static readonly Brush FadeLeft = Fade(0, 1);
-
         private readonly FrameworkElement _text;
         private readonly TranslateTransform _shift;
         private readonly DispatcherTimer _pause = new();
@@ -245,31 +240,10 @@ public partial class DesktopLyricsView : UserControl
             _shift.BeginAnimation(TranslateTransform.XProperty, null);
             _shift.X = 0;
             _forward = true;
-            var box = _text.Parent as FrameworkElement;
-            double width = box?.ActualWidth ?? 0;
+            double width = (_text.Parent as FrameworkElement)?.ActualWidth ?? 0;
             _overflow = width > 0 ? _text.ActualWidth - width : 0;
-            if (box != null)
-                box.OpacityMask = _overflow > 1 ? FadeRight : null;
             if (_running && _overflow > 1)
                 Wait(StartPause);
-        }
-
-        private static Brush Fade(double left, double right)
-        {
-            const double edge = 0.06;
-            var brush = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
-            brush.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(255 * left), 0, 0, 0), 0));
-            brush.GradientStops.Add(new GradientStop(Colors.Black, edge));
-            brush.GradientStops.Add(new GradientStop(Colors.Black, 1 - edge));
-            brush.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(255 * right), 0, 0, 0), 1));
-            brush.Freeze();
-            return brush;
-        }
-
-        private void SetMask(Brush mask)
-        {
-            if (_text.Parent is FrameworkElement box)
-                box.OpacityMask = mask;
         }
 
         private void Wait(TimeSpan delay)
@@ -300,10 +274,8 @@ public partial class DesktopLyricsView : UserControl
                     return;
                 _moving = false;
                 _forward = !_forward;
-                SetMask(_forward ? FadeRight : FadeLeft);
                 Wait(_forward ? StartPause : EndPause);
             };
-            SetMask(FadeBoth);
             _moving = true;
             _shift.BeginAnimation(TranslateTransform.XProperty, animation);
         }
