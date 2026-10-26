@@ -68,12 +68,66 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE768;" />
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE8B9;" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                    <TextBlock Style="{StaticResource Body}" Text="Кнопки плеера в трее" />
-                    <TextBlock Style="{StaticResource Caption}" Text="Назад, пауза и вперёд рядом с часами, пока играет Spotify, Яндекс Музыка или YouTube. Если они под стрелкой ^ — перетащите их на панель задач" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource Body}" Text="Островок с плеером" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="Вверху экрана — что играет, сколько прошло и кнопки «назад», «пауза», «вперёд». Любой плеер: музыка, ролики, фильмы. Полоса перематывает, колёсико мыши меняет громкость плеера. Островок перетаскивается куда угодно, в том числе на панель задач, и растягивается за края. Во время игр и в полноэкранных окнах островок прячется" />
                 </StackPanel>
-                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding MediaButtons}" OnContent="Вкл." OffContent="Выкл." />
+                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding MediaIsland}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE769;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Островок на паузе" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="Через сколько прятать островок, когда плеер на паузе. Вернётся, как только музыка или видео заиграют снова. Если не скрывать, островок с паузой висит, пока плеер или вкладка открыты" />
+                </StackPanel>
+                <ComboBox Grid.Column="2" Width="200" ItemsSource="{x:Static vm:SettingsViewModel.IslandPauseHides}"
+                          DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding IslandPauseHide}" />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE70E;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Прятать островок в край экрана" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="От островка остаётся тонкая полоска у края экрана, а сам он выезжает, когда курсор упирается в край напротив него. Спрятать можно и жестом — задвинуть островок за край экрана, достать — потянуть от края" />
+                </StackPanel>
+                <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding IslandDocked}" OnContent="Вкл." OffContent="Выкл." />
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid Style="{StaticResource RowGrid}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Glyph}" FontSize="20" HorizontalAlignment="Left" Text="&#xE916;" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Body}" Text="Автоскрытие островка" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                               Text="Островок показывается при смене трека, паузе и продолжении, а потом сам уезжает в край экрана. Достать — подвести курсор к краю" />
+                </StackPanel>
+                <ComboBox Grid.Column="2" Width="200" ItemsSource="{x:Static vm:SettingsViewModel.IslandAutoHides}"
+                          DisplayMemberPath="Title" SelectedValuePath="Value" SelectedValue="{Binding IslandAutoHide}" />
             </Grid>
         </Border>
 

@@ -17,15 +17,12 @@ public sealed class TrayService : IDisposable
     private readonly MixerViewModel _mixer;
     private readonly SettingsViewModel _settings;
     private readonly App _app;
-    private readonly MediaSessionService _player;
-    private readonly MediaTrayIcons _media;
 
-    public TrayService(App app, MixerViewModel mixer, SettingsViewModel settings, MediaSessionService player)
+    public TrayService(App app, MixerViewModel mixer, SettingsViewModel settings)
     {
         _app = app;
         _mixer = mixer;
         _settings = settings;
-        _player = player;
 
         using var stream = Application.GetResourceStream(new Uri("pack://application:,,,/Assets/app.ico")).Stream;
         _icon = new Forms.NotifyIcon
@@ -42,16 +39,6 @@ public sealed class TrayService : IDisposable
 
         _mixer.Master.PropertyChanged += OnMasterChanged;
         UpdateTooltip();
-
-        // Значки плеера создаются сразу после основного, чтобы их номера в трее не менялись от запуска к запуску
-        _media = new MediaTrayIcons(_player, app.Dispatcher, ShowMenu) { Enabled = _settings.MediaButtons };
-        _settings.PropertyChanged += OnSettingsChanged;
-    }
-
-    private void OnSettingsChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName == nameof(SettingsViewModel.MediaButtons))
-            _media.Enabled = _settings.MediaButtons;
     }
 
     private void OnMasterChanged(object? sender, PropertyChangedEventArgs e)
@@ -92,16 +79,16 @@ public sealed class TrayService : IDisposable
 
         menu.Items.Add(new MenuItem
         {
-            Header = "Кнопки плеера в трее",
-            IsCheckable = true,
-            IsChecked = _settings.MediaButtons,
-        }.Also(mi => mi.Click += (_, _) => _settings.MediaButtons = mi.IsChecked));
-        menu.Items.Add(new MenuItem
-        {
             Header = "Песня и текст на рабочем столе",
             IsCheckable = true,
             IsChecked = _settings.DesktopLyrics,
         }.Also(mi => mi.Click += (_, _) => _settings.DesktopLyrics = mi.IsChecked));
+        menu.Items.Add(new MenuItem
+        {
+            Header = "Островок с плеером",
+            IsCheckable = true,
+            IsChecked = _settings.MediaIsland,
+        }.Also(mi => mi.Click += (_, _) => _settings.MediaIsland = mi.IsChecked));
         menu.Items.Add(Item("Горячие клавиши", () => _app.ShowMain(AppPage.Hotkeys)));
         menu.Items.Add(Item("Настройки", () => _app.ShowMain(AppPage.Settings)));
         menu.Items.Add(new Separator());
@@ -122,8 +109,6 @@ public sealed class TrayService : IDisposable
     public void Dispose()
     {
         _mixer.Master.PropertyChanged -= OnMasterChanged;
-        _settings.PropertyChanged -= OnSettingsChanged;
-        _media.Dispose();
         _icon.Visible = false;
         _icon.Dispose();
     }

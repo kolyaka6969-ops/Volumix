@@ -1,0 +1,183 @@
+<Window
+    x:Class="Volumix.Views.MediaIslandWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Volumix — сейчас играет"
+    WindowStyle="None"
+    AllowsTransparency="True"
+    Background="Transparent"
+    ResizeMode="NoResize"
+    ShowInTaskbar="False"
+    ShowActivated="False"
+    Topmost="True"
+    Focusable="False"
+    Opacity="0"
+    SizeToContent="WidthAndHeight"
+    FontFamily="{StaticResource UiFont}">
+    <Window.Resources>
+        <!-- Островок тёмный, как на телефоне: светлая тема Windows его не перекрашивает. Только вшитый в светлую
+             панель задач он светлый, под цвет панели (цвета меняет ApplyMode) -->
+        <SolidColorBrush x:Key="IslandText" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="IslandSubtext" Color="#A6FFFFFF" />
+        <SolidColorBrush x:Key="IslandFaint" Color="#33FFFFFF" />
+        <SolidColorBrush x:Key="IslandHover" Color="#26FFFFFF" />
+        <SolidColorBrush x:Key="IslandStrong" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="IslandOnStrong" Color="#FF161618" />
+
+        <Style x:Key="IslandButton" TargetType="Button">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{DynamicResource IslandText}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Back" Background="{TemplateBinding Background}" CornerRadius="16">
+                            <TextBlock x:Name="GlyphText" Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" FontFamily="{StaticResource IconFont}"
+                                       FontSize="{TemplateBinding FontSize}" Foreground="{TemplateBinding Foreground}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Back" Property="Opacity" Value="0.85" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Back" Property="RenderTransformOrigin" Value="0.5,0.5" />
+                                <Setter TargetName="Back" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.9" ScaleY="0.9" />
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Back" Property="Opacity" Value="0.35" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource IslandHover}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TimeText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{DynamicResource IslandSubtext}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+        </Style>
+    </Window.Resources>
+
+    <!-- Отступ 16 — место под тень. Масштаб растягивается за нижний край, ширина — за боковые;
+         спрятанный в край островок уезжает за край сдвигом Slide, оставляя видимой тонкую полоску -->
+    <!-- Host обрезается по рабочей области монитора: спрятанный островок не вылезает на панель задач и соседний экран -->
+    <Grid x:Name="Host">
+    <Grid x:Name="Frame" Margin="16" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Grid.LayoutTransform>
+            <ScaleTransform x:Name="Zoom" ScaleX="1" ScaleY="1" />
+        </Grid.LayoutTransform>
+        <Grid.RenderTransform>
+            <TranslateTransform x:Name="Slide" />
+        </Grid.RenderTransform>
+    <Border x:Name="Root" Width="400" Padding="10,10,12,10" CornerRadius="20" BorderThickness="1"
+            Background="#F2161618" BorderBrush="#1FFFFFFF"
+            MouseLeftButtonDown="Root_MouseLeftButtonDown" MouseRightButtonUp="Root_MouseRightButtonUp">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270" Opacity="0.35" />
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Border x:Name="CoverBox" Width="46" Height="46" CornerRadius="10" Background="{DynamicResource IslandFaint}">
+                <Grid>
+                    <TextBlock x:Name="CoverGlyph" FontFamily="{StaticResource IconFont}" FontSize="20" Text="&#xE8D6;"
+                               Foreground="{DynamicResource IslandSubtext}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Border x:Name="CoverImage" CornerRadius="10" Visibility="Collapsed">
+                        <Border.Background>
+                            <ImageBrush x:Name="CoverBrush" Stretch="UniformToFill" />
+                        </Border.Background>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <StackPanel x:Name="TextPanel" Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center">
+                <TextBlock x:Name="TitleText" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource IslandText}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="SubtitleText" FontSize="12" Margin="0,1,0,0" Foreground="{DynamicResource IslandSubtext}"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+
+            <StackPanel x:Name="ButtonsPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="PreviousButton" Style="{StaticResource IslandButton}" FontSize="14" Content="&#xF8AC;"
+                        ToolTip="Назад" Click="Previous_Click" />
+                <Button x:Name="PlayButton" Style="{StaticResource IslandButton}" Width="36" Height="36" Margin="4,0"
+                        FontSize="15" Content="&#xF8AE;" Background="{DynamicResource IslandStrong}" Foreground="{DynamicResource IslandOnStrong}" Click="PlayPause_Click" />
+                <Button x:Name="NextButton" Style="{StaticResource IslandButton}" FontSize="14" Content="&#xF8AD;"
+                        ToolTip="Вперёд" Click="Next_Click" />
+            </StackPanel>
+
+            <!-- На панели задач вместо строки с временем — тонкая полоса прогресса. Нажимать по ней можно и чуть ниже:
+                 место для нажатия заходит в нижний отступ островка, а высота строки та же -->
+            <Grid x:Name="MiniSeek" Grid.Row="1" Grid.ColumnSpan="3" Height="8" Margin="2,1,2,-4" Background="Transparent"
+                  Visibility="Collapsed" MouseLeftButtonDown="Seek_MouseLeftButtonDown" MouseMove="Seek_MouseMove"
+                  MouseLeftButtonUp="Seek_MouseLeftButtonUp" LostMouseCapture="Seek_LostMouseCapture">
+                <Border x:Name="MiniTrack" Height="2" Margin="0,2,0,0" VerticalAlignment="Top" CornerRadius="1"
+                        Background="{DynamicResource IslandFaint}" ClipToBounds="True">
+                    <Border CornerRadius="1" Background="{DynamicResource IslandStrong}" RenderTransformOrigin="0,0.5">
+                        <Border.RenderTransform>
+                            <ScaleTransform x:Name="MiniScale" ScaleX="0" />
+                        </Border.RenderTransform>
+                    </Border>
+                </Border>
+            </Grid>
+
+            <Grid x:Name="TimeRow" Grid.Row="1" Grid.ColumnSpan="3" Margin="2,8,2,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" MinWidth="30" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" MinWidth="30" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="PositionText" Style="{StaticResource TimeText}" Text="0:00" />
+                <!-- Полоса тонкая, а нажимать и тянуть можно по всей высоте строки -->
+                <Grid x:Name="Track" Grid.Column="1" Height="14" Background="Transparent" Margin="6,0"
+                      MouseLeftButtonDown="Seek_MouseLeftButtonDown" MouseMove="Seek_MouseMove"
+                      MouseLeftButtonUp="Seek_MouseLeftButtonUp" LostMouseCapture="Seek_LostMouseCapture">
+                    <Border x:Name="TrackLine" Height="4" CornerRadius="2" Background="#33FFFFFF" VerticalAlignment="Center"
+                            ClipToBounds="True">
+                        <Border CornerRadius="2" Background="White" RenderTransformOrigin="0,0.5">
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="ProgressScale" ScaleX="0" />
+                            </Border.RenderTransform>
+                        </Border>
+                    </Border>
+                </Grid>
+                <TextBlock x:Name="DurationText" Grid.Column="2" Style="{StaticResource TimeText}" TextAlignment="Right"
+                           HorizontalAlignment="Right" Text="0:00" />
+            </Grid>
+        </Grid>
+    </Border>
+
+        <!-- Края, за которые островок растягивается. Почти прозрачные, а не прозрачные: по полностью
+             прозрачным точкам слоистого окна щелчок проходит насквозь -->
+        <Border x:Name="LeftGrip" Width="8" HorizontalAlignment="Left" Margin="-3,14" Background="#01000000"
+                Cursor="SizeWE" MouseLeftButtonDown="Grip_MouseLeftButtonDown" />
+        <Border x:Name="RightGrip" Width="8" HorizontalAlignment="Right" Margin="0,14,-3,14" Background="#01000000"
+                Cursor="SizeWE" MouseLeftButtonDown="Grip_MouseLeftButtonDown" />
+        <Border x:Name="BottomGrip" Height="8" VerticalAlignment="Bottom" Margin="20,0,20,-3" Background="#01000000"
+                Cursor="SizeNS" MouseLeftButtonDown="Grip_MouseLeftButtonDown" />
+    </Grid>
+    </Grid>
+</Window>

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Windows.Threading;
 using Volumix.Services;
 
 namespace Volumix.Tests;
@@ -414,5 +416,40 @@ public class MediaSessionTests
         using var ms = new System.IO.MemoryStream();
         bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
         return ms.ToArray();
+    }
+
+    /// <summary>Только читает состояние Spotify, ничего не переключает.</summary>
+    [SkippableFact]
+    public void FindsRunningSpotify()
+    {
+        Skip.If(Process.GetProcessesByName("Spotify").Length == 0, "Spotify не запущен");
+
+        var found = new TaskCompletionSource<(bool, string?)>();
+        var thread = new Thread(() =>
+        {
+            var spotify = new MediaSessionService(Dispatcher.CurrentDispatcher);
+            spotify.Changed += () =>
+            {
+                if (spotify.IsAvailable)
+                    found.TrySetResult((spotify.IsPlaying, $"{spotify.Artist} — {spotify.Title}"));
+            };
+            spotify.Start();
+            Dispatcher.Run();
+            spotify.Dispose();
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        try
+        {
+            Assert.True(found.Task.Wait(TimeSpan.FromSeconds(10)), "медиа-сеанс Spotify не найден");
+            var (_, track) = found.Task.Result;
+            Assert.False(string.IsNullOrWhiteSpace(track.Trim('—', ' ')));
+        }
+        finally
+        {
+            Dispatcher.FromThread(thread)?.InvokeShutdown();
+            thread.Join(5000);
+        }
     }
 }

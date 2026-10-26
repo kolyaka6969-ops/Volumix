@@ -46,6 +46,25 @@ public sealed class SettingsViewModel : ObservableObject
         new Option<MusicSourceMode>(MusicSourceMode.YouTube, "YouTube (и браузер)"),
     };
 
+    public static IReadOnlyList<Option<int>> IslandPauseHides { get; } = new[]
+    {
+        new Option<int>(10, "Через 10 секунд"),
+        new Option<int>(30, "Через 30 секунд"),
+        new Option<int>(60, "Через минуту"),
+        new Option<int>(300, "Через 5 минут"),
+        new Option<int>(900, "Через 15 минут"),
+        new Option<int>(0, "Не скрывать"),
+    };
+
+    public static IReadOnlyList<Option<int>> IslandAutoHides { get; } = new[]
+    {
+        new Option<int>(0, "Выключено"),
+        new Option<int>(3, "Через 3 секунды"),
+        new Option<int>(5, "Через 5 секунд"),
+        new Option<int>(10, "Через 10 секунд"),
+        new Option<int>(30, "Через 30 секунд"),
+    };
+
     public string Version => "Версия " + (Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0");
 
     public bool Autostart
@@ -97,16 +116,70 @@ public sealed class SettingsViewModel : ObservableObject
         set { if (S.CloseToTray == value) return; S.CloseToTray = value; Save(); OnPropertyChanged(); }
     }
 
-    public bool MediaButtons
-    {
-        get => S.MediaButtons;
-        set { if (S.MediaButtons == value) return; S.MediaButtons = value; Save(); OnPropertyChanged(); }
-    }
-
     public bool DesktopLyrics
     {
         get => S.DesktopLyrics;
         set { if (S.DesktopLyrics == value) return; S.DesktopLyrics = value; Save(); OnPropertyChanged(); }
+    }
+
+    public bool MediaIsland
+    {
+        get => S.MediaIsland;
+        set { if (S.MediaIsland == value) return; S.MediaIsland = value; Save(); OnPropertyChanged(); }
+    }
+
+    /// <summary>Секунды паузы до скрытия островка, 0 — не скрывать. Значение из файла вне списка подтягивается к ближайшему.</summary>
+    public int IslandPauseHide
+    {
+        get => S.IslandPauseHide <= 0 ? 0
+            : IslandPauseHides.Where(o => o.Value > 0).MinBy(o => Math.Abs(o.Value - S.IslandPauseHide))!.Value;
+        set
+        {
+            value = Math.Max(0, value);
+            if (S.IslandPauseHide == value) return;
+            S.IslandPauseHide = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
+    public int IslandAutoHide
+    {
+        get => Math.Max(0, S.IslandAutoHide);
+        set
+        {
+            value = Math.Max(0, value);
+            if (S.IslandAutoHide == value) return;
+            S.IslandAutoHide = value;
+            Save();
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IslandDocked
+    {
+        get => S.IslandDocked;
+        set { if (S.IslandDocked == value) return; S.IslandDocked = value; Save(); OnPropertyChanged(); }
+    }
+
+    /// <summary>Ширина и масштаб островка запоминаются вместе, когда его отпускают после растягивания.</summary>
+    public void SetIslandSize(double width, double scale, double taskbarWidth)
+    {
+        S.IslandWidth = width;
+        S.IslandScale = scale;
+        S.IslandTaskbarWidth = taskbarWidth;
+        Save();
+    }
+
+    public Views.IslandPlacement IslandPlacement =>
+        new(S.IslandX, S.IslandY, S.IslandScreen ?? "", S.IslandOnTaskbar, S.IslandTaskbarX);
+
+    /// <summary>Место островка запоминается, когда его отпускают после перетаскивания.</summary>
+    public void SetIslandPlacement(Views.IslandPlacement placement)
+    {
+        (S.IslandX, S.IslandY, S.IslandScreen) = (placement.X, placement.Y, placement.Screen);
+        (S.IslandOnTaskbar, S.IslandTaskbarX) = (placement.OnTaskbar, placement.TaskbarX);
+        Save();
     }
 
     public bool DesktopControls

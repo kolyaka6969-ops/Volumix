@@ -34,10 +34,32 @@ public sealed class AppSettings
     public int VolumeStep { get; set; } = 2;
     public bool ShowOsd { get; set; } = true;
     public bool CloseToTray { get; set; } = true;
-    /// <summary>Кнопки плеера (назад / пауза / вперёд) значками в трее.</summary>
-    public bool MediaButtons { get; set; } = true;
     /// <summary>Песня и её текст на рабочем столе вместо обоев, пока играет песня.</summary>
     public bool DesktopLyrics { get; set; }
+    /// <summary>Островок вверху экрана: что играет в любом плеере, сколько прошло и кнопки. Во время игр прячется.</summary>
+    public bool MediaIsland { get; set; }
+    /// <summary>Через сколько секунд паузы прятать островок; 0 — не прятать.</summary>
+    public int IslandPauseHide { get; set; } = DefaultIslandPauseHide;
+
+    public const int DefaultIslandPauseHide = 60;
+    /// <summary>Ширина островка в точках при масштабе 1.</summary>
+    public double IslandWidth { get; set; } = 400;
+    /// <summary>Масштаб островка: тянут за нижний край.</summary>
+    public double IslandScale { get; set; } = 1;
+    /// <summary>Ширина островка на панели задач.</summary>
+    public double IslandTaskbarWidth { get; set; } = 320;
+    /// <summary>Где островок на экране: доли свободного места слева и сверху. 0,5 и 0 — вверху посередине.</summary>
+    public double IslandX { get; set; } = 0.5;
+    public double IslandY { get; set; }
+    /// <summary>Монитор островка, «» — основной.</summary>
+    public string IslandScreen { get; set; } = "";
+    /// <summary>Островок закреплён на панели задач, в <see cref="IslandTaskbarX"/> долях её длины.</summary>
+    public bool IslandOnTaskbar { get; set; }
+    public double IslandTaskbarX { get; set; } = 0.75;
+    /// <summary>Островок спрятан в край экрана и выезжает, когда к краю подводят курсор.</summary>
+    public bool IslandDocked { get; set; }
+    /// <summary>Через сколько секунд островок сам прячется в край; 0 — не прячется.</summary>
+    public int IslandAutoHide { get; set; }
     /// <summary>Скорость бегущей строки длинного названия на обоях, точек макета 1920×1080 в секунду.</summary>
     public int MarqueeSpeed { get; set; } = DefaultMarqueeSpeed;
 

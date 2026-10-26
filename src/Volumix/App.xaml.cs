@@ -25,6 +25,7 @@ public partial class App : Application
     private OsdWindow? _osd;
     private MediaSessionService? _media;
     private DesktopLyricsService? _desktopLyrics;
+    private MediaIslandService? _island;
 
     public static MixerViewModel Mixer { get; private set; } = null!;
     public static SettingsViewModel SettingsVm { get; private set; } = null!;
@@ -72,7 +73,7 @@ public partial class App : Application
         _hotkeys.Pressed += OnHotkey;
         SettingsVm = new SettingsViewModel(_hotkeys, Mixer);
         _media = new MediaSessionService(Dispatcher) { Mode = SettingsVm.Source };
-        _tray = new TrayService(this, Mixer, SettingsVm, _media);
+        _tray = new TrayService(this, Mixer, SettingsVm);
         _desktopLyrics = new DesktopLyricsService(_media, Dispatcher)
         {
             MarqueeSpeed = SettingsVm.MarqueeSpeed,
@@ -81,10 +82,36 @@ public partial class App : Application
             Controls = SettingsVm.DesktopControls,
             Enabled = SettingsVm.DesktopLyrics,
         };
+        _island = new MediaIslandService(Dispatcher)
+        {
+            PausedLimit = IslandPausedLimit(),
+            IslandWidth = SettingsService.Current.IslandWidth,
+            IslandScale = SettingsService.Current.IslandScale,
+            TaskbarWidth = SettingsService.Current.IslandTaskbarWidth,
+            Placement = SettingsVm.IslandPlacement,
+            Docked = SettingsVm.IslandDocked,
+            AutoHide = IslandAutoHide(),
+            Enabled = SettingsVm.MediaIsland,
+        };
+        _island.Resized += SettingsVm.SetIslandSize;
+        _island.Moved += SettingsVm.SetIslandPlacement;
+        _island.DockedChanged += docked => SettingsVm.IslandDocked = docked;
         SettingsVm.PropertyChanged += (_, args) =>
         {
             switch (args.PropertyName)
             {
+                case nameof(SettingsViewModel.MediaIsland):
+                    _island.Enabled = SettingsVm.MediaIsland;
+                    break;
+                case nameof(SettingsViewModel.IslandPauseHide):
+                    _island.PausedLimit = IslandPausedLimit();
+                    break;
+                case nameof(SettingsViewModel.IslandAutoHide):
+                    _island.AutoHide = IslandAutoHide();
+                    break;
+                case nameof(SettingsViewModel.IslandDocked):
+                    _island.Docked = SettingsVm.IslandDocked;
+                    break;
                 case nameof(SettingsViewModel.DesktopLyrics):
                     _desktopLyrics.Enabled = SettingsVm.DesktopLyrics;
                     break;
@@ -110,6 +137,12 @@ public partial class App : Application
         if (!e.Args.Contains(AutostartService.TrayArgument, StringComparer.OrdinalIgnoreCase))
             ShowMain(AppPage.Mixer);
     }
+
+    private static TimeSpan? IslandPausedLimit() =>
+        SettingsVm.IslandPauseHide > 0 ? TimeSpan.FromSeconds(SettingsVm.IslandPauseHide) : null;
+
+    private static TimeSpan? IslandAutoHide() =>
+        SettingsVm.IslandAutoHide > 0 ? TimeSpan.FromSeconds(SettingsVm.IslandAutoHide) : null;
 
     public void ShowMain(AppPage? page)
     {
@@ -217,6 +250,7 @@ public partial class App : Application
             return;
         IsExiting = true;
         _desktopLyrics?.Dispose();
+        _island?.Dispose();
         _tray?.Dispose();
         _media?.Dispose();
         _hotkeys?.Dispose();
