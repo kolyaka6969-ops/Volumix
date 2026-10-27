@@ -75,25 +75,17 @@ internal sealed class DesktopLayer : IDisposable
 
     private void Ensure()
     {
-        var target = FindTarget();
-        if (target == null)
-            return; // Explorer ещё запускается — попробуем на следующей проверке
-
         var hwnd = Handle;
-        if (hwnd != IntPtr.Zero && _target is { } t &&
-            t.Parent == target.Parent &&
-            t.Icons == target.Icons &&
-            t.Raised == target.Raised &&
-            IsWindow(hwnd) &&
-            (t.Icons == IntPtr.Zero || IsWindow(t.Icons)) &&
-            GetAncestor(hwnd, GA_PARENT) == t.Parent)
+        if (hwnd != IntPtr.Zero && _target is { } t && IsWindow(hwnd) && IsWindow(t.Icons) && GetAncestor(hwnd, GA_PARENT) == t.Parent)
         {
             Place(hwnd, t, onlyIfMoved: true);
             return;
         }
 
         Destroy();
-        _target = target;
+        _target = FindTarget();
+        if (_target == null)
+            return; // Explorer ещё запускается — попробуем на следующей проверке
 
         var (x, y, width, height) = Bounds(_target, _device);
         var p = new HwndSourceParameters("Volumix desktop", width, height)
@@ -133,12 +125,19 @@ internal sealed class DesktopLayer : IDisposable
     /// <summary>WPF снимает WS_EX_LAYERED со всех окон без попиксельной прозрачности — не даём.</summary>
     private static IntPtr KeepLayered(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_STYLECHANGING && unchecked((int)wParam.ToInt64()) == GWL_EXSTYLE)
+        if (msg == WM_STYLECHANGING && unchecked((int)wParam.ToInt64()) == GWL_EXSTYLE && lParam != IntPtr.Zero)
         {
-            var style = Marshal.PtrToStructure<STYLESTRUCT>(lParam);
-            style.StyleNew |= WS_EX_LAYERED;
-            Marshal.StructureToPtr(style, lParam, false);
-            handled = true;
+            try
+            {
+                var style = Marshal.PtrToStructure<STYLESTRUCT>(lParam);
+                style.StyleNew |= WS_EX_LAYERED;
+                Marshal.StructureToPtr(style, lParam, false);
+                handled = true;
+            }
+            catch (Exception ex)
+            {
+                App.LogError(ex);
+            }
         }
         return IntPtr.Zero;
     }
@@ -196,83 +195,17 @@ internal sealed class DesktopLayer : IDisposable
         return pid == Environment.ProcessId;
     }
 
-    /// <summary>
-    /// Ищет окно Wallpaper Engine или Lively, если они запущены.
-    /// </summary>
-    internal static IntPtr FindWallpaperWindow()
-    {
-        IntPtr result = IntPtr.Zero;
-        EnumWindows((top, _) =>
-        {
-            GetWindowThreadProcessId(top, out uint pid);
-            if (IsWallpaperProcess(pid))
-            {
-                result = top;
-                return false;
-            }
-
-            var cls = GetWindowClass(top);
-            if (cls is "Progman" or "WorkerW")
-            {
-                EnumChildWindows(top, (child, _) =>
-                {
-                    GetWindowThreadProcessId(child, out uint cpid);
-                    if (IsWallpaperProcess(cpid))
-                    {
-                        result = child;
-                        return false;
-                    }
-                    return true;
-                }, IntPtr.Zero);
-
-                if (result != IntPtr.Zero)
-                    return false;
-            }
-
-            return true;
-        }, IntPtr.Zero);
-
-        return result;
-    }
-
-    /// <summary>
-    /// Находит родительское окно в слое рабочего стола (WorkerW или Progman), в которое встроены обои.
-    /// </summary>
-    private static IntPtr GetWallpaperHost(IntPtr weWnd)
-    {
-        IntPtr host = weWnd;
-        while (true)
-        {
-            var parent = GetAncestor(host, GA_PARENT);
-            if (parent == IntPtr.Zero)
-                break;
-            host = parent;
-            var pcls = GetWindowClass(host);
-            if (pcls is "Progman" or "WorkerW")
-                break;
-        }
-        return host;
-    }
-
     private static Target? FindTarget()
     {
-        var we = FindWallpaperWindow();
-        if (we != IntPtr.Zero)
-        {
-            var host = GetWallpaperHost(we);
-            var icons = FindWindowEx(host, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (icons != IntPtr.Zero)
-                return new Target(host, icons, Raised: true, Layered: NoSurface(host));
-
-            // Значки не в host (например, значки в Progman, а обои в WorkerW)
-            // Встаём в host поверх всего (HWND_TOP), позади значков
-            return new Target(host, Icons: IntPtr.Zero, Raised: false, Layered: NoSurface(host));
-        }
-
         var progman = FindWindow("Progman", null);
         if (progman == IntPtr.Zero)
             return null;
-        SendMessageTimeout(progman, WM_SPAWN_WORKER, new IntPtr(0xD), new IntPtr(1), SMTO_NORMAL, 1000, out _);
+
+        // Windows 10 и ранние Windows 11: 0x052C с параметрами (0, 0) заставляет Explorer создать WorkerW позади значков.
+        // Windows 11 24H2+: параметры (0xD, 1) для DirectComposition.
+        SendMessageTimeout(progman, WM_SPAWN_WORKER, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out _);
+        if (Environment.OSVersion.Version.Build >= 22000)
+            SendMessageTimeout(progman, WM_SPAWN_WORKER, new IntPtr(0xD), new IntPtr(1), SMTO_NORMAL, 1000, out _);
 
         if (NoSurface(progman))
         {
@@ -282,22 +215,43 @@ internal sealed class DesktopLayer : IDisposable
             // Значки не в Progman: их перенесла другая программа обоев — ищем, где они теперь
         }
 
-        IntPtr defView = IntPtr.Zero, fallbackHost = IntPtr.Zero, worker = IntPtr.Zero;
+        IntPtr defView = IntPtr.Zero, host = IntPtr.Zero, worker = IntPtr.Zero;
         EnumWindows((top, _) =>
         {
             var view = FindWindowEx(top, IntPtr.Zero, "SHELLDLL_DefView", null);
             if (view != IntPtr.Zero)
             {
                 defView = view;
-                fallbackHost = top;
+                host = top;
+                // На Windows 10 WorkerW создаётся позади окна со значками в Z-порядке
                 worker = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
+                if (worker == IntPtr.Zero)
+                {
+                    // Проверяем следующее окно в Z-порядке вниз
+                    var next = GetWindow(top, GW_HWNDNEXT);
+                    while (next != IntPtr.Zero)
+                    {
+                        if (GetWindowClass(next) == "WorkerW")
+                        {
+                            worker = next;
+                            break;
+                        }
+                        next = GetWindow(next, GW_HWNDNEXT);
+                    }
+                }
             }
             return true;
         }, IntPtr.Zero);
+
         if (worker != IntPtr.Zero)
             return new Target(worker, defView, Raised: false, Layered: NoSurface(worker));
-        // Слоя позади значков нет — встаём под значки в том же окне, что и они
-        return defView == IntPtr.Zero ? null : new Target(fallbackHost, defView, Raised: true, Layered: true);
+
+        // Слоя позади значков нет: вставать прямо под значки (Raised) можно ТОЛЬКО на Windows 11 с DirectComposition (NoSurface).
+        // На Windows 10 без DirectComposition вставать под значки в Progman нельзя — WPF перекроет SHELLDLL_DefView и значки пропадут!
+        if (NoSurface(host) && defView != IntPtr.Zero)
+            return new Target(host, defView, Raised: true, Layered: true);
+
+        return null;
     }
 
     private static bool NoSurface(IntPtr hwnd) =>
@@ -318,9 +272,18 @@ internal sealed class DesktopLayer : IDisposable
         _source = null;
         _target = null;
         // В старой схеме WorkerW сам не перерисовывается и оставил бы последний кадр. Как в Lively:
-        // null заставляет Windows заново применить текущие обои.
-        if (!raised && FindWallpaperWindow() == IntPtr.Zero)
-            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, null, SPIF_UPDATEINIFILE);
+        // пустая строка ("") заставляет Windows заново применить текущие обои без падения по access violation.
+        if (!raised)
+        {
+            try
+            {
+                SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, "", SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+            }
+            catch (Exception ex)
+            {
+                App.LogError(ex);
+            }
+        }
     }
 
     public void Dispose()

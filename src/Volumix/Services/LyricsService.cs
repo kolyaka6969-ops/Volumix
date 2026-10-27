@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -60,7 +59,7 @@ public static class LyricsService
     private const double DurationTolerance = 3;
     /// <summary>У клипа на YouTube вступление или титры: длительность ролика расходится с треком на секунды.</summary>
     internal const double VideoDurationTolerance = 12;
-    private const int CacheLimit = 50;
+    private const int CacheLimit = 200;
 
     private static readonly HttpClient Http = CreateClient();
     private static readonly HttpClient Fallback = CreateFallback();
@@ -80,7 +79,7 @@ public static class LyricsService
 
     private static HttpClient CreateClient()
     {
-        var http = new HttpClient { BaseAddress = new Uri("https://lrclib.net/api/"), Timeout = TimeSpan.FromSeconds(5) };
+        var http = new HttpClient { BaseAddress = new Uri("https://lrclib.net/api/"), Timeout = TimeSpan.FromSeconds(15) };
         // lrclib просит подписывать запросы названием программы
         var version = typeof(LyricsService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"Volumix/{version} (+https://github.com/kolyaka6969-ops/Volumix)");
@@ -488,24 +487,6 @@ public static class LyricsService
             if (VideoCache.TryGetValue(key, out var cached))
                 return cached;
 
-        // Сначала пробуем основное (наиболее точное) прочтение: если синхронный текст уже есть,
-        // не шлём лишние запросы к lrclib и исключаем ошибку 503 ServerOverloaded
-        if (candidates.Count > 1)
-        {
-            var firstTracks = await SearchAsync(candidates[0].Title, candidates[0].Artist, ct);
-            if (firstTracks != null && Pick(firstTracks, seconds, VideoDurationTolerance) is { Status: LyricsStatus.Synced } firstSynced)
-            {
-                var r = (firstSynced, 0);
-                lock (VideoCache)
-                {
-                    if (VideoCache.Count >= CacheLimit)
-                        VideoCache.Clear();
-                    VideoCache[key] = r;
-                }
-                return r;
-            }
-        }
-
         // Первая очередь: lrclib и резервная база сразу для всех прочтений.
         // Точный запрос get на lrclib тут не помогает (длительность ролика не та) и медленный — только поиск.
         using var tier1 = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -554,22 +535,44 @@ public static class LyricsService
     /// <summary>
     /// Выбор между прочтениями ролика: сначала синхронный текст с подходящей длительностью (в порядке прочтений),
     /// потом обычный с подходящей длительностью, потом любой найденный текст без меток времени.
+    /// Качественный текст (не транслит, без ложных меток) имеет преимущество.
     /// </summary>
     internal static (Lyrics Lyrics, int Index)? PickVideo(IReadOnlyList<List<LrcLibTrack>?> results, double seconds)
     {
-        var picked = results.Select(r => r == null ? null : Pick(r, seconds, VideoDurationTolerance)).ToList();
-        int synced = picked.FindIndex(l => l?.Status == LyricsStatus.Synced);
+        var picked = results.Select(r => r == null ? null : PickTrack(r, seconds, VideoDurationTolerance)).ToList();
+
+        // 1. Идеальный синхронный текст (Quality 0: не транслит, без битых меток)
+        int synced = picked.FindIndex(p => p is { Lyrics.Status: LyricsStatus.Synced, Quality: 0 });
         if (synced >= 0)
-            return (picked[synced]!, synced);
-        int any = picked.FindIndex(l => l != null);
+            return (picked[synced]!.Value.Lyrics, synced);
+
+        // 2. Любой синхронный текст с подходящей длительностью
+        synced = picked.FindIndex(p => p is { Lyrics.Status: LyricsStatus.Synced });
+        if (synced >= 0)
+            return (picked[synced]!.Value.Lyrics, synced);
+
+        // 3. Качественный обычный текст (Quality <= 1)
+        int plain = picked.FindIndex(p => p is { Lyrics.Status: LyricsStatus.Plain, Quality: <= 1 });
+        if (plain >= 0)
+            return (picked[plain]!.Value.Lyrics, plain);
+
+        // 4. Любой подходящий текст
+        int any = picked.FindIndex(p => p != null);
         if (any >= 0)
-            return (picked[any]!, any);
+            return (picked[any]!.Value.Lyrics, any);
+
         // Длительность не совпала ни у кого (длинный клип, live) — синхронизация не сойдётся, но сам текст верный
         for (int i = 0; i < results.Count; i++)
         {
-            var plain = results[i]?.Select(ToLyrics).FirstOrDefault(l => l != null);
-            if (plain != null)
-                return (plain.Status == LyricsStatus.Synced ? Lyrics.FromPlain(string.Join("\n", plain.Lines.Select(l => l.Text))) : plain, i);
+            var p = results[i]?.Where(t => QualityScore(t, seconds) <= 1).Select(ToLyrics).FirstOrDefault(l => l != null);
+            if (p != null)
+                return (p.Status == LyricsStatus.Synced ? Lyrics.FromPlain(string.Join("\n", p.Lines.Select(l => l.Text))) : p, i);
+        }
+        for (int i = 0; i < results.Count; i++)
+        {
+            var p = results[i]?.Select(ToLyrics).FirstOrDefault(l => l != null);
+            if (p != null)
+                return (p.Status == LyricsStatus.Synced ? Lyrics.FromPlain(string.Join("\n", p.Lines.Select(l => l.Text))) : p, i);
         }
         return null;
     }
@@ -581,16 +584,7 @@ public static class LyricsService
             var query = artist == null ? Query(("track_name", title)) : Query(("track_name", title), ("artist_name", artist));
             using var response = await Http.GetAsync("search?" + query, ct);
             if (!response.IsSuccessStatusCode)
-            {
-                if (response.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests)
-                {
-                    await Task.Delay(350, ct);
-                    using var retry = await Http.GetAsync("search?" + query, ct);
-                    if (retry.IsSuccessStatusCode)
-                        return JsonSerializer.Deserialize<List<LrcLibTrack>>(await retry.Content.ReadAsStringAsync(ct), Json) ?? new();
-                }
                 return null;
-            }
             return JsonSerializer.Deserialize<List<LrcLibTrack>>(await response.Content.ReadAsStringAsync(ct), Json) ?? new();
         }
         catch (Exception)
@@ -644,9 +638,14 @@ public static class LyricsService
             if (response.IsSuccessStatusCode)
             {
                 var track = JsonSerializer.Deserialize<LrcLibTrack>(await response.Content.ReadAsStringAsync(ct), Json);
-                best = track == null ? null : ToLyrics(track);
-                if (best?.Status == LyricsStatus.Synced)
-                    return best;
+                if (track != null)
+                {
+                    int quality = QualityScore(track, seconds);
+                    var lyrics = ToLyrics(track);
+                    if (quality == 0 && lyrics?.Status == LyricsStatus.Synced)
+                        return lyrics;
+                    best = lyrics;
+                }
             }
         }
 
@@ -656,6 +655,12 @@ public static class LyricsService
         var firstArtist = artist == null ? null : FirstArtist(artist);
         if (shortTitle.Length > 0 && (shortTitle != title || firstArtist != artist))
             variants.Add((shortTitle, firstArtist));
+
+        MediaSessionService.ExpandAliases(variants, (t, a) =>
+        {
+            if (t != null && !variants.Any(v => string.Equals(v.Title, t, StringComparison.OrdinalIgnoreCase) && string.Equals(v.Artist, a, StringComparison.OrdinalIgnoreCase)))
+                variants.Add((t, a));
+        });
 
         bool failed = false;
         foreach (var (t, a) in variants)
@@ -669,7 +674,7 @@ public static class LyricsService
             }
             var found = JsonSerializer.Deserialize<List<LrcLibTrack>>(await response.Content.ReadAsStringAsync(ct), Json);
             var lyrics = found == null ? null : Pick(found, seconds, DurationTolerance);
-            if (lyrics?.Status == LyricsStatus.Synced)
+            if (lyrics?.Status == LyricsStatus.Synced && QualityScore(lyrics, seconds) == 0)
                 return lyrics;
             best ??= lyrics;
         }
@@ -677,24 +682,175 @@ public static class LyricsService
     }
 
     /// <summary>Лучший из найденных: подходящий по длительности, синхронный, потом просто текст.</summary>
-    private static Lyrics? Pick(List<LrcLibTrack> found, double seconds, double tolerance) =>
+    private static (Lyrics Lyrics, int Quality)? PickTrack(List<LrcLibTrack> found, double seconds, double tolerance) =>
         found.Where(t => seconds <= 0 || Math.Abs(t.Duration - seconds) <= tolerance)
-            .Select(t => (Track: t, Lyrics: ToLyrics(t)))
+            .Select(t => (Track: t, Quality: QualityScore(t, seconds), Lyrics: ToLyrics(t)))
             .Where(x => x.Lyrics != null)
-            .OrderBy(x => x.Lyrics!.Status switch { LyricsStatus.Synced => 0, LyricsStatus.Plain => 1, _ => 2 })
+            .OrderBy(x => x.Quality)
             .ThenBy(x => Math.Abs(x.Track.Duration - seconds))
-            .Select(x => x.Lyrics)
+            .Select(x => ((Lyrics Lyrics, int Quality)?)(x.Lyrics!, x.Quality))
             .FirstOrDefault();
+
+    private static Lyrics? Pick(List<LrcLibTrack> found, double seconds, double tolerance) =>
+        PickTrack(found, seconds, tolerance)?.Lyrics;
+
+    internal static int QualityScore(LrcLibTrack track, double seconds)
+    {
+        var rawText = track.SyncedLyrics ?? track.PlainLyrics ?? "";
+        bool translit = IsTransliteratedRussian(rawText);
+        bool hasSynced = !string.IsNullOrWhiteSpace(track.SyncedLyrics);
+        if (hasSynced)
+        {
+            var lines = ParseLrc(track.SyncedLyrics!);
+            if (IsSynced(lines))
+            {
+                if (translit)
+                    return 4;
+                if (IsBrokenSync(lines, seconds))
+                    return 2;
+                return 0; // Идеальный синхронный текст
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(track.PlainLyrics) || hasSynced)
+        {
+            if (translit)
+                return 5;
+            return 1; // Обычный текст
+        }
+        return 6;
+    }
+
+    internal static int QualityScore(Lyrics lyrics, double seconds)
+    {
+        if (lyrics.Status == LyricsStatus.Synced)
+        {
+            var text = string.Join("\n", lyrics.Lines.Select(l => l.Text));
+            if (IsTransliteratedRussian(text))
+                return 4;
+            if (IsBrokenSync(lyrics.Lines, seconds))
+                return 2;
+            return 0;
+        }
+        if (lyrics.Status == LyricsStatus.Plain)
+        {
+            var text = string.Join("\n", lyrics.Lines.Select(l => l.Text));
+            if (IsTransliteratedRussian(text))
+                return 5;
+            return 1;
+        }
+        return 6;
+    }
+
+    internal static bool IsBrokenSync(IReadOnlyList<LyricLine> lines, double durationSeconds)
+    {
+        if (lines.Count < 3)
+            return false;
+
+        int fastCount = 0;
+        for (int i = 1; i < lines.Count; i++)
+        {
+            if (Math.Abs((lines[i].Time - lines[i - 1].Time).TotalSeconds) < 0.75)
+            {
+                if (++fastCount >= 3)
+                    return true;
+            }
+            else
+            {
+                fastCount = 0;
+            }
+        }
+        return false;
+    }
+
+    private static readonly Regex RussianTranslitWords = new(
+        @"\b(?:ya|etu|eto|eti|prishol|prishyol|prishel|daty|dat|piesnyu|pesnyu|pesnya|gryoz|grez|khrustalynih|khrustalnykh|khrustalynh|slyoz|slez|dlya|lyubvi|lyubov|lyublyu|chto|kogda|tebe|tebya|menya|snova|zhizn|schastye|tolko|moya|moyo|tvoya|tvoyo|nichego|nikogda|budet|byli|zdes|serdtse|dusha|glaza|ruki|nashi|navsegda|khorosho|pochemu|potomu|vsegda|vmeste|odin|odna|odno|kazhdyy|kazhdaya|vremya|vecher|utro|noch|doroga|gorod|solntse|nebo|zemlya|veter|dozhd|sneg|ogon|voda)\b",
+        RegexOptions.IgnoreCase);
+
+    internal static bool HasCyrillic(string text)
+    {
+        foreach (char c in text)
+            if (c is >= '\u0400' and <= '\u04FF')
+                return true;
+        return false;
+    }
+
+    internal static bool IsTransliteratedRussian(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || HasCyrillic(text))
+            return false;
+        return RussianTranslitWords.Matches(text).Count >= 2;
+    }
+
+    internal static string ConvertTransliteratedLine(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return text;
+
+        var wordMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ya"] = "я", ["etu"] = "эту", ["eto"] = "это", ["eti"] = "эти",
+            ["prishol"] = "пришел", ["prishyol"] = "пришел", ["prishel"] = "пришел",
+            ["daty"] = "дать", ["dat"] = "дать",
+            ["piesnyu"] = "песню", ["pesnyu"] = "песню", ["pesnya"] = "песня",
+            ["iz"] = "из", ["mira"] = "мира", ["gryoz"] = "грез", ["grez"] = "грез",
+            ["khrustalynih"] = "хрустальных", ["khrustalnykh"] = "хрустальных", ["khrustalynh"] = "хрустальных",
+            ["slyoz"] = "слез", ["slez"] = "слез",
+            ["dlya"] = "для", ["lyubvi"] = "любви", ["lyubov"] = "любовь", ["lyublyu"] = "люблю",
+            ["chto"] = "что", ["kogda"] = "когда", ["tebe"] = "тебе", ["tebya"] = "тебя",
+            ["menya"] = "меня", ["mne"] = "мне", ["vse"] = "все", ["vseh"] = "всех", ["vsyo"] = "всё",
+            ["kak"] = "как", ["tak"] = "так", ["net"] = "нет", ["da"] = "да",
+            ["byl"] = "был", ["byla"] = "была", ["byli"] = "были", ["budet"] = "будет",
+            ["tolko"] = "только", ["odin"] = "один", ["odna"] = "одна", ["odno"] = "одно",
+            ["moya"] = "моя", ["moyo"] = "моё", ["moy"] = "мой",
+            ["tvoya"] = "твоя", ["tvoyo"] = "твоё", ["tvoy"] = "твой",
+            ["nikogda"] = "никогда", ["nichego"] = "ничего",
+            ["zdes"] = "здесь", ["tam"] = "там", ["snova"] = "снова",
+            ["zhizn"] = "жизнь", ["schastye"] = "счастье",
+            ["serdtse"] = "сердце", ["dusha"] = "душа", ["glaza"] = "глаза", ["ruki"] = "руки"
+        };
+
+        return Regex.Replace(text, @"\b[a-zA-Z]+\b", m =>
+        {
+            var word = m.Value;
+            if (wordMap.TryGetValue(word, out var cyr))
+            {
+                if (char.IsUpper(word[0]))
+                    return char.ToUpper(cyr[0]) + (cyr.Length > 1 ? cyr[1..] : "");
+                return cyr;
+            }
+            return word;
+        });
+    }
+
+    internal static string ConvertTransliteratedToCyrillic(string text) => ConvertTransliteratedLine(text);
 
     private static Lyrics? ToLyrics(LrcLibTrack track)
     {
-        var synced = string.IsNullOrWhiteSpace(track.SyncedLyrics) ? new List<LyricLine>() : ParseLrc(track.SyncedLyrics);
+        var syncedRaw = track.SyncedLyrics;
+        var plainRaw = track.PlainLyrics;
+
+        var synced = string.IsNullOrWhiteSpace(syncedRaw) ? new List<LyricLine>() : ParseLrc(syncedRaw);
         if (IsSynced(synced))
+        {
+            if (IsTransliteratedRussian(syncedRaw ?? ""))
+            {
+                for (int i = 0; i < synced.Count; i++)
+                    synced[i] = synced[i] with { Text = ConvertTransliteratedLine(synced[i].Text) };
+            }
             return new(LyricsStatus.Synced, synced);
-        if (!string.IsNullOrWhiteSpace(track.PlainLyrics))
-            return Lyrics.FromPlain(track.PlainLyrics);
+        }
+        if (!string.IsNullOrWhiteSpace(plainRaw))
+        {
+            var text = IsTransliteratedRussian(plainRaw) ? ConvertTransliteratedLine(plainRaw) : plainRaw;
+            return Lyrics.FromPlain(text);
+        }
         if (synced.Count > 0)
-            return Lyrics.FromPlain(string.Join("\n", synced.Select(l => l.Text)));
+        {
+            var text = string.Join("\n", synced.Select(l => l.Text));
+            if (IsTransliteratedRussian(text))
+                text = ConvertTransliteratedLine(text);
+            return Lyrics.FromPlain(text);
+        }
         return track.Instrumental ? Lyrics.Instrumental : null;
     }
 

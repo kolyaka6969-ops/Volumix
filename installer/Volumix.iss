@@ -2,7 +2,7 @@
 
 #define AppName "Volumix"
 #ifndef AppVersion
-  #define AppVersion "1.6.2"
+  #define AppVersion "1.6.3"
 #endif
 #define AppExe "Volumix.exe"
 #define PublishDir "..\publish"
