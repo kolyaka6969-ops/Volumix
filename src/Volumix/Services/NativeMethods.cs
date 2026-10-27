@@ -113,6 +113,24 @@ internal static class NativeMethods
     public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    public static extern bool EnumChildWindows(IntPtr hWnd, EnumWindowsProc callback, IntPtr lParam);
+
+    public static bool IsWallpaperExecutableName(string exe) =>
+        exe.Contains("wallpaper", StringComparison.OrdinalIgnoreCase) ||
+        exe.Contains("lively", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsWallpaperProcess(uint pid)
+    {
+        if (pid == 0 || pid == (uint)Environment.ProcessId)
+            return false;
+        var path = GetProcessPath(pid);
+        if (path == null)
+            return false;
+        var exe = System.IO.Path.GetFileNameWithoutExtension(path);
+        return IsWallpaperExecutableName(exe);
+    }
+
+    [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

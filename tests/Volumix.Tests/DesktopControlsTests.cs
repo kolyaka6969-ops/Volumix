@@ -83,4 +83,22 @@ public class DesktopControlsTests
             view.Stop();
         });
     }
+
+    [Theory]
+    [InlineData("wallpaper64", true)]
+    [InlineData("wallpaper32", true)]
+    [InlineData("webwallpaper64", true)]
+    [InlineData("edgewallpaper64", true)]
+    [InlineData("applicationwallpaperinject64", true)]
+    [InlineData("wallpaperui", true)]
+    [InlineData("lively", true)]
+    [InlineData("lively.player", true)]
+    [InlineData("explorer", false)]
+    [InlineData("spotify", false)]
+    [InlineData("volumix", false)]
+    [InlineData("chrome", false)]
+    public void RecognizesWallpaperProcesses(string exe, bool expected)
+    {
+        Assert.Equal(expected, NativeMethods.IsWallpaperExecutableName(exe));
+    }
 }

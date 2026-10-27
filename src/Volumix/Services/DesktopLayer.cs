@@ -75,17 +75,25 @@ internal sealed class DesktopLayer : IDisposable
 
     private void Ensure()
     {
+        var target = FindTarget();
+        if (target == null)
+            return; // Explorer ещё запускается — попробуем на следующей проверке
+
         var hwnd = Handle;
-        if (hwnd != IntPtr.Zero && _target is { } t && IsWindow(hwnd) && IsWindow(t.Icons) && GetAncestor(hwnd, GA_PARENT) == t.Parent)
+        if (hwnd != IntPtr.Zero && _target is { } t &&
+            t.Parent == target.Parent &&
+            t.Icons == target.Icons &&
+            t.Raised == target.Raised &&
+            IsWindow(hwnd) &&
+            (t.Icons == IntPtr.Zero || IsWindow(t.Icons)) &&
+            GetAncestor(hwnd, GA_PARENT) == t.Parent)
         {
             Place(hwnd, t, onlyIfMoved: true);
             return;
         }
 
         Destroy();
-        _target = FindTarget();
-        if (_target == null)
-            return; // Explorer ещё запускается — попробуем на следующей проверке
+        _target = target;
 
         var (x, y, width, height) = Bounds(_target, _device);
         var p = new HwndSourceParameters("Volumix desktop", width, height)
@@ -188,8 +196,79 @@ internal sealed class DesktopLayer : IDisposable
         return pid == Environment.ProcessId;
     }
 
+    /// <summary>
+    /// Ищет окно Wallpaper Engine или Lively, если они запущены.
+    /// </summary>
+    internal static IntPtr FindWallpaperWindow()
+    {
+        IntPtr result = IntPtr.Zero;
+        EnumWindows((top, _) =>
+        {
+            GetWindowThreadProcessId(top, out uint pid);
+            if (IsWallpaperProcess(pid))
+            {
+                result = top;
+                return false;
+            }
+
+            var cls = GetWindowClass(top);
+            if (cls is "Progman" or "WorkerW")
+            {
+                EnumChildWindows(top, (child, _) =>
+                {
+                    GetWindowThreadProcessId(child, out uint cpid);
+                    if (IsWallpaperProcess(cpid))
+                    {
+                        result = child;
+                        return false;
+                    }
+                    return true;
+                }, IntPtr.Zero);
+
+                if (result != IntPtr.Zero)
+                    return false;
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Находит родительское окно в слое рабочего стола (WorkerW или Progman), в которое встроены обои.
+    /// </summary>
+    private static IntPtr GetWallpaperHost(IntPtr weWnd)
+    {
+        IntPtr host = weWnd;
+        while (true)
+        {
+            var parent = GetAncestor(host, GA_PARENT);
+            if (parent == IntPtr.Zero)
+                break;
+            host = parent;
+            var pcls = GetWindowClass(host);
+            if (pcls is "Progman" or "WorkerW")
+                break;
+        }
+        return host;
+    }
+
     private static Target? FindTarget()
     {
+        var we = FindWallpaperWindow();
+        if (we != IntPtr.Zero)
+        {
+            var host = GetWallpaperHost(we);
+            var icons = FindWindowEx(host, IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (icons != IntPtr.Zero)
+                return new Target(host, icons, Raised: true, Layered: NoSurface(host));
+
+            // Значки не в host (например, значки в Progman, а обои в WorkerW)
+            // Встаём в host поверх всего (HWND_TOP), позади значков
+            return new Target(host, Icons: IntPtr.Zero, Raised: false, Layered: NoSurface(host));
+        }
+
         var progman = FindWindow("Progman", null);
         if (progman == IntPtr.Zero)
             return null;
@@ -203,14 +282,14 @@ internal sealed class DesktopLayer : IDisposable
             // Значки не в Progman: их перенесла другая программа обоев — ищем, где они теперь
         }
 
-        IntPtr defView = IntPtr.Zero, host = IntPtr.Zero, worker = IntPtr.Zero;
+        IntPtr defView = IntPtr.Zero, fallbackHost = IntPtr.Zero, worker = IntPtr.Zero;
         EnumWindows((top, _) =>
         {
             var view = FindWindowEx(top, IntPtr.Zero, "SHELLDLL_DefView", null);
             if (view != IntPtr.Zero)
             {
                 defView = view;
-                host = top;
+                fallbackHost = top;
                 worker = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
             }
             return true;
@@ -218,7 +297,7 @@ internal sealed class DesktopLayer : IDisposable
         if (worker != IntPtr.Zero)
             return new Target(worker, defView, Raised: false, Layered: NoSurface(worker));
         // Слоя позади значков нет — встаём под значки в том же окне, что и они
-        return defView == IntPtr.Zero ? null : new Target(host, defView, Raised: true, Layered: true);
+        return defView == IntPtr.Zero ? null : new Target(fallbackHost, defView, Raised: true, Layered: true);
     }
 
     private static bool NoSurface(IntPtr hwnd) =>
@@ -240,7 +319,7 @@ internal sealed class DesktopLayer : IDisposable
         _target = null;
         // В старой схеме WorkerW сам не перерисовывается и оставил бы последний кадр. Как в Lively:
         // null заставляет Windows заново применить текущие обои.
-        if (!raised)
+        if (!raised && FindWallpaperWindow() == IntPtr.Zero)
             SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, null, SPIF_UPDATEINIFILE);
     }
 

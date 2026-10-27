@@ -174,16 +174,23 @@ internal sealed class DesktopPointer : IDisposable
     private static double Fraction(Target target, POINT pt) =>
         target.Bounds.Width <= 0 ? 0 : Math.Clamp((pt.X - target.Bounds.Left) / (double)target.Bounds.Width, 0, 1);
 
-    /// <summary>Под точкой рабочий стол (значки, слой обоев, наше окно), а не чьё-то окно.</summary>
+    /// <summary>Под точкой рабочий стол (значки, слой обоев, наше окно, Wallpaper Engine), а не чьё-то окно.</summary>
     private static bool OverDesktop(POINT pt)
     {
         var window = WindowFromPoint(pt);
         if (window == IntPtr.Zero)
             return false;
         var root = GetAncestor(window, GA_ROOT);
-        var name = new StringBuilder(32);
-        GetClassName(root == IntPtr.Zero ? window : root, name, name.Capacity);
-        return name.ToString() is "Progman" or "WorkerW";
+        var targetHwnd = root == IntPtr.Zero ? window : root;
+        var name = new StringBuilder(64);
+        GetClassName(targetHwnd, name, name.Capacity);
+        var className = name.ToString();
+        if (className is "Progman" or "WorkerW")
+            return true;
+        GetWindowThreadProcessId(targetHwnd, out uint pid);
+        if (pid == (uint)Environment.ProcessId)
+            return true;
+        return IsWallpaperProcess(pid);
     }
 
     public void Dispose() => Enabled = false;
