@@ -1,22 +1,23 @@
 using System;
 using System.ComponentModel;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Interop;
 using Volumix.ViewModels;
 using Volumix.Views;
 using Forms = System.Windows.Forms;
 
 namespace Volumix.Services;
 
-/// <summary>Значок в области уведомлений. Само меню — WPF, чтобы оно было в стиле Windows 11.</summary>
+/// <summary>Значок в области уведомлений со всплывающим окном в стиле Orbit.</summary>
 public sealed class TrayService : IDisposable
 {
     private readonly Forms.NotifyIcon _icon;
     private readonly MixerViewModel _mixer;
     private readonly SettingsViewModel _settings;
     private readonly App _app;
+    private TrayMenuWindow? _menuWindow;
+    private long _lastMenuOpenedAt;
+
+    public bool IsMenuVisible => _menuWindow?.IsVisible == true;
 
     public TrayService(App app, MixerViewModel mixer, SettingsViewModel settings)
     {
@@ -31,15 +32,39 @@ public sealed class TrayService : IDisposable
             Text = "Volumix",
             Visible = true,
         };
+
+        // Обрабатываем как MouseUp, так и MouseClick, гарантируя открытие по ПКМ в любой версии Windows
+        _icon.MouseUp += (_, e) =>
+        {
+            if (e.Button == Forms.MouseButtons.Right)
+                _app.Dispatcher.BeginInvoke(ToggleMenu);
+        };
         _icon.MouseClick += (_, e) =>
         {
-            if (e.Button == Forms.MouseButtons.Left) _app.ToggleFlyout();
-            else if (e.Button == Forms.MouseButtons.Right) ShowMenu();
+            if (e.Button == Forms.MouseButtons.Left)
+                _app.ToggleFlyout();
+            else if (e.Button == Forms.MouseButtons.Right)
+                _app.Dispatcher.BeginInvoke(ToggleMenu);
         };
 
         _mixer.Master.PropertyChanged += OnMasterChanged;
         UpdateTooltip();
     }
+
+    public void ToggleMenu()
+    {
+        if (Environment.TickCount64 - _lastMenuOpenedAt < 250)
+            return;
+        _lastMenuOpenedAt = Environment.TickCount64;
+
+        _menuWindow ??= new TrayMenuWindow(_app, _settings);
+        if (_menuWindow.IsVisible)
+            _menuWindow.HideMenu();
+        else
+            _menuWindow.ShowMenu();
+    }
+
+    public void HideMenu() => _menuWindow?.HideMenu();
 
     private void OnMasterChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -56,69 +81,11 @@ public sealed class TrayService : IDisposable
         _icon.Text = text.Length > 63 ? text[..63] : text;
     }
 
-    private void ShowMenu()
-    {
-        _mixer.Refresh();
-        var menu = new ContextMenu { Placement = PlacementMode.MousePoint };
-
-        menu.Items.Add(Item("Открыть микшер", () => _app.ShowMain(AppPage.Mixer)));
-
-        var devices = new MenuItem { Header = "Устройство вывода" };
-        foreach (var device in _mixer.Devices)
-        {
-            var d = device;
-            devices.Items.Add(new MenuItem
-            {
-                Header = d.Name,
-                IsCheckable = true,
-                IsChecked = d == _mixer.SelectedDevice,
-            }.Also(mi => mi.Click += (_, _) => _mixer.SelectedDevice = d));
-        }
-        devices.IsEnabled = _mixer.Devices.Count > 0;
-        menu.Items.Add(devices);
-
-        menu.Items.Add(new MenuItem
-        {
-            Header = "Песня и текст на рабочем столе",
-            IsCheckable = true,
-            IsChecked = _settings.DesktopLyrics,
-        }.Also(mi => mi.Click += (_, _) => _settings.DesktopLyrics = mi.IsChecked));
-        menu.Items.Add(new MenuItem
-        {
-            Header = "Островок с плеером",
-            IsCheckable = true,
-            IsChecked = _settings.MediaIsland,
-        }.Also(mi => mi.Click += (_, _) => _settings.MediaIsland = mi.IsChecked));
-        menu.Items.Add(Item("Горячие клавиши", () => _app.ShowMain(AppPage.Hotkeys)));
-        menu.Items.Add(Item("Настройки", () => _app.ShowMain(AppPage.Settings)));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(Item("Выход", _app.ExitApp));
-
-        // Без активации меню не закрывается по щелчку мимо
-        menu.Opened += (_, _) =>
-        {
-            if (PresentationSource.FromVisual(menu) is HwndSource src)
-                NativeMethods.SetForegroundWindow(src.Handle);
-        };
-        menu.IsOpen = true;
-    }
-
-    private static MenuItem Item(string header, Action action) =>
-        new MenuItem { Header = header }.Also(mi => mi.Click += (_, _) => action());
-
     public void Dispose()
     {
         _mixer.Master.PropertyChanged -= OnMasterChanged;
         _icon.Visible = false;
         _icon.Dispose();
-    }
-}
-
-internal static class ObjectExtensions
-{
-    public static T Also<T>(this T obj, Action<T> action)
-    {
-        action(obj);
-        return obj;
+        _menuWindow?.Close();
     }
 }

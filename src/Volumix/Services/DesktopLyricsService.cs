@@ -22,8 +22,8 @@ public sealed class DesktopLyricsService : IDisposable
     /// Плеер присылает название раньше длительности, а без неё текст ищется хуже — ждём, пока всё придёт.
     /// Сам трек на обоях появляется сразу, задерживается только поиск текста.
     /// </summary>
-    private static readonly TimeSpan FetchDelay = TimeSpan.FromMilliseconds(700);
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan FetchDelay = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(3);
     /// <summary>
     /// Сколько держать заглушку, пока новый ролик YouTube проверяется. Проверка — поиск текста — занимает секунду-две,
     /// а Chrome при смене ролика ещё и на пару секунд выдаёт его за трек другого сайта.
@@ -31,7 +31,7 @@ public sealed class DesktopLyricsService : IDisposable
     private static readonly TimeSpan HoldLimit = TimeSpan.FromSeconds(8);
 
     /// <summary>Как часто пересчитываем, где на экране кнопки: окно могли пересоздать, экран — сменить.</summary>
-    private static readonly TimeSpan TargetsInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan TargetsInterval = TimeSpan.FromSeconds(5);
 
     private readonly MediaSessionService _media;
     private readonly Dispatcher _main;
@@ -221,7 +221,7 @@ public sealed class DesktopLyricsService : IDisposable
         _fetchTimer.Stop();
         if (key != null)
         {
-            _fetchTimer.Interval = FetchDelay;
+            _fetchTimer.Interval = track?.Duration > TimeSpan.Zero ? TimeSpan.FromMilliseconds(200) : FetchDelay;
             _fetchTimer.Start();
         }
     }
@@ -246,27 +246,47 @@ public sealed class DesktopLyricsService : IDisposable
             // Из YouTube приходят и клипы, и лекции, и влоги — на обои пускаем только то, что нашлось в базе текстов.
             // Название ролика редко совпадает с названием песни, поэтому ищутся сразу все варианты прочтения.
             var candidates = MediaSessionService.Candidates(track.Title, track.Artist).Take(4).ToList();
-            // YouTube сам пишет в описании ролика, какая в нём песня. Раз написал — это музыка, даже если
-            // текста и обложки нигде нет, и искать текст лучше по этим песне и исполнителю
-            YouTubeSong? song = null;
-            if (_media.Video is var (videoTitle, channel, thumbnail))
-            {
-                song = await YouTubeService.FindSongAsync(videoTitle, channel, thumbnail);
-                if (cts.IsCancellationRequested)
-                    return;
-                if (song != null)
-                    candidates.Insert(0, (song.Title, song.Artist));
-            }
+
+            // Сначала ищем текст по вариантам из названия и исполнителя:
+            // lrclib отвечает быстро (~1 сек), не блокируя рабочий стол медленным поиском по самому YouTube
             var (result, index) = await LyricsService.FindVideoAsync(candidates, track.Duration, cts.Token);
             if (cts.IsCancellationRequested)
                 return;
             bool failed = result.Status == LyricsStatus.Error;
 
+            YouTubeSong? song = null;
+            // Если текст по названию не нашёлся — возможно, песня указана в описании ролика на YouTube («Музыка»)
+            if (!IsMusic(result) && _media.Video is var (videoTitle, channel, thumbnail))
+            {
+                song = await YouTubeService.FindSongAsync(videoTitle, channel, thumbnail);
+                if (cts.IsCancellationRequested)
+                    return;
+                if (song != null)
+                {
+                    var songCandidates = new[] { (song.Title, song.Artist) };
+                    var (songResult, _) = await LyricsService.FindVideoAsync(songCandidates, track.Duration, cts.Token);
+                    if (cts.IsCancellationRequested)
+                        return;
+                    if (IsMusic(songResult))
+                    {
+                        result = songResult;
+                        index = 0;
+                        candidates = songCandidates.ToList();
+                    }
+                    failed |= songResult.Status == LyricsStatus.Error;
+                }
+            }
+
             if (!IsMusic(result))
             {
                 // Текст мог не найтись из-за недоступной базы текстов. Тогда пускаем песню на обои,
                 // если её знает каталог обложек: случайные ролики и влоги там не находятся.
-                var art = await CoverArtService.FindAsync(candidates, cts.Token);
+                byte[]? art = null;
+                if (track.Cover != null && !track.CoverIsFrame)
+                    art = track.Cover;
+                else
+                    art = await CoverArtService.FindAsync(candidates, cts.Token);
+
                 if (cts.IsCancellationRequested)
                     return;
                 // Неофициальный клип или кавер: ни текста, ни обложки в каталогах, но по названию видно, что это музыка.

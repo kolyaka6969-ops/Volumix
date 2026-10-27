@@ -49,7 +49,7 @@ public partial class MediaIslandWindow : Window
     /// Пока островок вшит в панель задач, присматриваем за ним: панель может перестроить свои окна поверх него.
     /// А островок, который тянут по панели, ещё не вшит и должен быть поверх неё.
     /// </summary>
-    private static readonly TimeSpan TaskbarInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan TaskbarInterval = TimeSpan.FromSeconds(2);
 
     /// <summary>Сколько точек спрятанного островка видно у края экрана.</summary>
     private const double Peek = 5;
@@ -362,6 +362,8 @@ public partial class MediaIslandWindow : Window
         return new IntPtr(NativeMethods.MA_NOACTIVATE);
     }
 
+    private Rect? _lastTaskbarSlot;
+
     /// <summary>
     /// Вшитый островок — над кнопками панели задач и посередине её высоты: панель перестраивает свои окна
     /// и меняет размер, и он мог оказаться под ними или съехать.
@@ -371,7 +373,11 @@ public partial class MediaIslandWindow : Window
         if (_embeddedIn == IntPtr.Zero)
             KeepOnTop();
         else if (_drag == Drag.None)
-            Place();
+        {
+            var taskbar = Taskbar();
+            if (taskbar == null || taskbar.Value.Slot != _lastTaskbarSlot || taskbar.Value.Hwnd != _embeddedIn)
+                Place();
+        }
     }
 
     /// <summary>Островок, который тянут по панели задач, — поверх неё: вшивается он, только когда его отпустят.</summary>
@@ -576,6 +582,7 @@ public partial class MediaIslandWindow : Window
     private void Place()
     {
         var bar = _onTaskbar ? TaskbarRect() : null;
+        _lastTaskbarSlot = bar;
         // На панели задач островок ужимается под её высоту
         if (bar is { } b && Frame.ActualHeight > 0)
         {

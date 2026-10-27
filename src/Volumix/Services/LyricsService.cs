@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -59,7 +60,7 @@ public static class LyricsService
     private const double DurationTolerance = 3;
     /// <summary>У клипа на YouTube вступление или титры: длительность ролика расходится с треком на секунды.</summary>
     internal const double VideoDurationTolerance = 12;
-    private const int CacheLimit = 200;
+    private const int CacheLimit = 50;
 
     private static readonly HttpClient Http = CreateClient();
     private static readonly HttpClient Fallback = CreateFallback();
@@ -79,7 +80,7 @@ public static class LyricsService
 
     private static HttpClient CreateClient()
     {
-        var http = new HttpClient { BaseAddress = new Uri("https://lrclib.net/api/"), Timeout = TimeSpan.FromSeconds(15) };
+        var http = new HttpClient { BaseAddress = new Uri("https://lrclib.net/api/"), Timeout = TimeSpan.FromSeconds(5) };
         // lrclib просит подписывать запросы названием программы
         var version = typeof(LyricsService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"Volumix/{version} (+https://github.com/kolyaka6969-ops/Volumix)");
@@ -487,6 +488,24 @@ public static class LyricsService
             if (VideoCache.TryGetValue(key, out var cached))
                 return cached;
 
+        // Сначала пробуем основное (наиболее точное) прочтение: если синхронный текст уже есть,
+        // не шлём лишние запросы к lrclib и исключаем ошибку 503 ServerOverloaded
+        if (candidates.Count > 1)
+        {
+            var firstTracks = await SearchAsync(candidates[0].Title, candidates[0].Artist, ct);
+            if (firstTracks != null && Pick(firstTracks, seconds, VideoDurationTolerance) is { Status: LyricsStatus.Synced } firstSynced)
+            {
+                var r = (firstSynced, 0);
+                lock (VideoCache)
+                {
+                    if (VideoCache.Count >= CacheLimit)
+                        VideoCache.Clear();
+                    VideoCache[key] = r;
+                }
+                return r;
+            }
+        }
+
         // Первая очередь: lrclib и резервная база сразу для всех прочтений.
         // Точный запрос get на lrclib тут не помогает (длительность ролика не та) и медленный — только поиск.
         using var tier1 = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -562,7 +581,16 @@ public static class LyricsService
             var query = artist == null ? Query(("track_name", title)) : Query(("track_name", title), ("artist_name", artist));
             using var response = await Http.GetAsync("search?" + query, ct);
             if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests)
+                {
+                    await Task.Delay(350, ct);
+                    using var retry = await Http.GetAsync("search?" + query, ct);
+                    if (retry.IsSuccessStatusCode)
+                        return JsonSerializer.Deserialize<List<LrcLibTrack>>(await retry.Content.ReadAsStringAsync(ct), Json) ?? new();
+                }
                 return null;
+            }
             return JsonSerializer.Deserialize<List<LrcLibTrack>>(await response.Content.ReadAsStringAsync(ct), Json) ?? new();
         }
         catch (Exception)

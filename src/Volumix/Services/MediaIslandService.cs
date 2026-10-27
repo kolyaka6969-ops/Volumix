@@ -31,6 +31,7 @@ public sealed class MediaIslandService : IDisposable
     private const double VolumeStep = 2;
 
     private readonly Dispatcher _dispatcher;
+    private readonly MediaSessionService? _media;
     private readonly DispatcherTimer _tick;
     private readonly GameDetector _games = new();
     private readonly NativeMethods.WinEventProc _foregroundProc;
@@ -41,6 +42,7 @@ public sealed class MediaIslandService : IDisposable
     private IslandTrack? _track;
     private string? _coverKey;
     private BitmapSource? _cover;
+    private bool _coverFromMedia;
     private DateTimeOffset? _pausedSince;
     private int _refreshVersion;
     private bool _enabled;
@@ -54,13 +56,42 @@ public sealed class MediaIslandService : IDisposable
     private bool _started;
     private bool _disposed;
 
-    public MediaIslandService(Dispatcher dispatcher)
+    public MediaIslandService(Dispatcher dispatcher, MediaSessionService? media = null)
     {
         _dispatcher = dispatcher;
+        _media = media;
         _tick = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TickInterval };
         _tick.Tick += (_, _) => OnTick();
         // Переключились в игру — прячемся сразу, не дожидаясь таймера
         _foregroundProc = (_, _, _, _, _, _, _) => _dispatcher.BeginInvoke(UpdateVisibility);
+        if (_media != null)
+            _media.Changed += OnMediaChanged;
+    }
+
+    private void OnMediaChanged()
+    {
+        _dispatcher.BeginInvoke(() =>
+        {
+            if (_disposed || _track == null || _session == null)
+                return;
+            if ((_cover == null || _coverFromMedia) && _media?.Cover != null)
+            {
+                if (SameSession(_session, _media.Session) ||
+                    (!string.IsNullOrWhiteSpace(_media.Title) && !string.IsNullOrWhiteSpace(_track.Title) &&
+                     (_track.Title.Contains(_media.Title, StringComparison.OrdinalIgnoreCase) ||
+                      _media.Title.Contains(_track.Title, StringComparison.OrdinalIgnoreCase))))
+                {
+                    var cover = DecodeCover(_media.Cover);
+                    if (cover != null)
+                    {
+                        _cover = cover;
+                        _coverFromMedia = true;
+                        _track = _track with { Cover = cover };
+                        Window().ShowTrack(_track);
+                    }
+                }
+            }
+        });
     }
 
     public bool Enabled
@@ -325,11 +356,31 @@ public sealed class MediaIslandService : IDisposable
                 var key = $"{session.SourceAppUserModelId}\n{props.Artist}\n{title}\n{props.AlbumTitle}";
                 if (key != _coverKey || _cover == null)
                 {
+                    _coverFromMedia = false;
                     var cover = props.Thumbnail == null ? null : await ReadCoverAsync(props.Thumbnail);
                     if (_disposed || session != _session || version != _refreshVersion)
                         return;
+
+                    // Браузер прислал значок программы вместо обложки или не прислал ничего — пробуем взять обложку у MediaSessionService
+                    if (cover == null && _media?.Cover != null)
+                    {
+                        if (SameSession(session, _media.Session) ||
+                            (!string.IsNullOrWhiteSpace(_media.Title) && (title.Contains(_media.Title, StringComparison.OrdinalIgnoreCase) || _media.Title.Contains(title, StringComparison.OrdinalIgnoreCase))))
+                        {
+                            cover = DecodeCover(_media.Cover);
+                            if (cover != null)
+                                _coverFromMedia = true;
+                        }
+                    }
+
                     _coverKey = key;
                     _cover = cover;
+
+                    // Если обложки всё ещё нет (видео или трек в браузере), ищем обложку в фоне
+                    if (_cover == null)
+                    {
+                        _ = ResolveCoverAsync(session, title, props.Artist, version);
+                    }
                 }
 
                 var timeline = session.GetTimelineProperties();
@@ -364,11 +415,21 @@ public sealed class MediaIslandService : IDisposable
         UpdateVisibility();
     }
 
+    private int _idleTicks;
+
     private void OnTick()
     {
-        // Ничего не играет, а сеанс на паузе — проверим, не заиграл ли другой плеер
+        // Ничего не играет, а сеанс на паузе — проверим, не заиграл ли другой плеер (раз в 2.5 сек)
         if (_track is not { IsPlaying: true })
-            Attach(false);
+        {
+            if (++_idleTicks % 5 == 0)
+                Attach(false);
+        }
+        else
+        {
+            _idleTicks = 0;
+        }
+
         UpdateVisibility();
         if (_window is { IsShown: true } window && _track != null)
             window.UpdateProgress(_track.PositionAt(DateTimeOffset.Now));
@@ -526,11 +587,63 @@ public sealed class MediaIslandService : IDisposable
                 await reader.LoadAsync((uint)stream.Size);
                 reader.ReadBytes(bytes);
             }
+            if (MediaSessionService.IsAppIcon(bytes))
+                return null;
+            return DecodeCover(bytes);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private async Task ResolveCoverAsync(GlobalSystemMediaTransportControlsSession session, string title, string? artist, int version)
+    {
+        try
+        {
+            // 1. Поиск по музыкальным каталогам (Deezer, iTunes, Genius)
+            var candidates = MediaSessionService.Candidates(title, artist).Take(3).ToList();
+            var (art, _) = await CoverArtService.LookUpAsync(candidates);
+            if (_disposed || session != _session || version != _refreshVersion)
+                return;
+
+            // 2. Если в каталогах нет, а это браузер или видеоролик — берём кадр ролика с YouTube
+            if (art == null && (MediaSessionService.IsBrowser(session.SourceAppUserModelId) || _track?.IsVideo == true))
+            {
+                var cleanTitle = MediaSessionService.VideoTitle(title);
+                var channel = MediaSessionService.CleanChannel(artist);
+                art = await YouTubeService.FindCoverAsync(cleanTitle, channel, null);
+                if (_disposed || session != _session || version != _refreshVersion)
+                    return;
+            }
+
+            if (art != null)
+            {
+                var bitmap = DecodeCover(art);
+                if (bitmap != null && _track != null && session == _session && version == _refreshVersion)
+                {
+                    _cover = bitmap;
+                    _coverFromMedia = false;
+                    _track = _track with { Cover = bitmap };
+                    Window().ShowTrack(_track);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Фоновая подгрузка обложки не должна ронять островок
+        }
+    }
+
+    private static BitmapSource? DecodeCover(byte[] data)
+    {
+        try
+        {
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.DecodePixelWidth = 128;
-            image.StreamSource = new MemoryStream(bytes);
+            image.StreamSource = new MemoryStream(data);
             image.EndInit();
             image.Freeze();
             return image;
@@ -553,6 +666,8 @@ public sealed class MediaIslandService : IDisposable
     {
         if (_disposed)
             return;
+        if (_media != null)
+            _media.Changed -= OnMediaChanged;
         Stop();
         _disposed = true;
         _window?.Close();

@@ -61,6 +61,18 @@ internal sealed class BrowserMusicDetector
             if (window.Title.Contains(needle, StringComparison.OrdinalIgnoreCase))
                 return window.Kind;
         }
+        // Не нашлось — возможно, вкладка только переключилась, а двухсекундный интервал ещё не прошёл:
+        // сбрасываем таймер и опрашиваем окна повторно.
+        if (_checkedAt != DateTime.MinValue)
+        {
+            _checkedAt = DateTime.MinValue;
+            Refresh();
+            foreach (var window in _windows)
+            {
+                if (window.Title.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                    return window.Kind;
+            }
+        }
         return BrowserMusic.None;
     }
 

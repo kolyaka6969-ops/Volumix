@@ -45,6 +45,7 @@ public partial class MainWindow : FluentWindow
         {
             e.Cancel = true;
             Hide();
+            App.TrimMemory();
             return;
         }
         base.OnClosing(e);

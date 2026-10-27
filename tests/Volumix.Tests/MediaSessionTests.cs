@@ -123,6 +123,31 @@ public class MediaSessionTests
     }
 
     [Fact]
+    public void SplitsYouTubeTitleWhenChannelDoesNotMatch()
+    {
+        var (title, artist, _) = MediaSessionService.CleanMetadata("ПОШЛАЯ МОЛЛИ - ХАННА МОНТАНА", "ХАРТ_hack", null,
+            MusicSource.YouTube);
+        Assert.Equal("ХАННА МОНТАНА", title);
+        Assert.Equal("ПОШЛАЯ МОЛЛИ", artist);
+    }
+
+    [Fact]
+    public void ScoresSpaceNormalizedTitles()
+    {
+        int score = CoverArtService.Score("ХАННА МОНТАНА", "ПОШЛАЯ МОЛЛИ", "Ханнамонтана", "Пошлая Молли");
+        Assert.True(score >= 5);
+    }
+
+    [Fact]
+    public void RejectsDifferentArtistWithSameTitle()
+    {
+        // "Save That Shit" by "Yung Tide & Tidez" vs wanted "Lil Peep"
+        int score = CoverArtService.Score("Save That Shit", "Lil Peep", "Save That Shit", "Yung Tide & Tidez");
+        Assert.Equal(3, score); // Только название совпало, исполнитель чужой
+        Assert.False(score >= 5);
+    }
+
+    [Fact]
     public void KeepsBrowserArtistWhenGiven()
     {
         var (title, artist, _) = MediaSessionService.CleanMetadata("Группа крови", "Кино", null, MusicSource.YandexMusic);

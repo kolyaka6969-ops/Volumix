@@ -14,7 +14,7 @@ namespace Volumix.Services;
 /// </summary>
 internal static class CoverArtService
 {
-    private const int CacheLimit = 200;
+    private const int CacheLimit = 30;
 
     // Три каталога по очереди на каждое прочтение — Deezer, Apple Music и Genius
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(10);
@@ -66,36 +66,34 @@ internal static class CoverArtService
 
         byte[]? art = null;
         bool failed = false;
-        try
-        {
-            art = await FromDeezerAsync(title, artist, ct);
-        }
-        catch (Exception)
-        {
-            // Deezer не ответил — пробуем Apple Music.
-            failed = true;
-        }
+
+        // Deezer и iTunes опрашиваем параллельно: отвечают за 150–300 мс
+        var deezerTask = SafeLoadAsync(() => FromDeezerAsync(title, artist, ct));
+        var itunesTask = SafeLoadAsync(() => FromITunesAsync(title, artist, ct));
+
+        await Task.WhenAll(deezerTask, itunesTask);
+        var (deezerArt, deezerScore, deezerFailed) = await deezerTask;
+        var (itunesArt, itunesScore, itunesFailed) = await itunesTask;
+
+        if (deezerArt != null && deezerScore >= itunesScore)
+            art = deezerArt;
+        else if (itunesArt != null)
+            art = itunesArt;
+        else if (deezerArt != null)
+            art = deezerArt;
+        failed = deezerFailed || itunesFailed;
+
+        // Если ни Deezer, ни iTunes не помогли — запасной каталог Genius
         if (art == null && !ct.IsCancellationRequested)
         {
             try
             {
-                art = await FromITunesAsync(title, artist, ct);
+                var (geniusArt, _) = await FromGeniusAsync(title, artist, ct);
+                art = geniusArt;
             }
             catch (Exception)
             {
-                // Apple Music не ответил — остаётся Genius
-                failed = true;
-            }
-        }
-        if (art == null && !ct.IsCancellationRequested)
-        {
-            try
-            {
-                art = await FromGeniusAsync(title, artist, ct);
-            }
-            catch (Exception)
-            {
-                // Обложки не будет: покажем то, что дал браузер.
+                // Обложки не будет: покажем то, что дал плеер.
                 failed = true;
             }
         }
@@ -114,6 +112,19 @@ internal static class CoverArtService
         return (art, art == null && (failed || ct.IsCancellationRequested));
     }
 
+    private static async Task<(byte[]? Art, int Score, bool Failed)> SafeLoadAsync(Func<Task<(byte[]? Art, int Score)>> load)
+    {
+        try
+        {
+            var (art, score) = await load();
+            return (art, score, false);
+        }
+        catch (Exception)
+        {
+            return (null, 0, true);
+        }
+    }
+
     private static HttpClient CreateHttp()
     {
         var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
@@ -121,7 +132,7 @@ internal static class CoverArtService
         return http;
     }
 
-    private static async Task<byte[]?> FromDeezerAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, int Score)> FromDeezerAsync(string title, string? artist, CancellationToken ct)
     {
         var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
         var json = await Http.GetStringAsync($"https://api.deezer.com/search?q={query}&limit=6", ct);
@@ -130,8 +141,9 @@ internal static class CoverArtService
         if (doc.RootElement.TryGetProperty("error", out _))
             throw new HttpRequestException("Deezer: " + doc.RootElement.GetProperty("error"));
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-            return null;
+            return (null, 0);
 
+        int minScore = string.IsNullOrWhiteSpace(artist) ? 3 : 5;
         var best = 0;
         string? bestUrl = null;
         foreach (var item in data.EnumerateArray())
@@ -139,43 +151,46 @@ internal static class CoverArtService
             var candidateTitle = Str(item, "title");
             var candidateArtist = item.TryGetProperty("artist", out var a) ? Str(a, "name") : null;
             var score = Score(title, artist, candidateTitle, candidateArtist);
-            if (score <= best || score < 3 || !item.TryGetProperty("album", out var album))
+            if (score <= best || score < minScore || !item.TryGetProperty("album", out var album))
                 continue;
             best = score;
             bestUrl = Str(album, "cover_xl") ?? Str(album, "cover_big") ?? Str(album, "cover_medium");
         }
-        return bestUrl == null ? null : await DownloadAsync(bestUrl, ct);
+        var art = bestUrl == null ? null : await DownloadAsync(bestUrl, ct);
+        return (art, art != null ? best : 0);
     }
 
-    private static async Task<byte[]?> FromITunesAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, int Score)> FromITunesAsync(string title, string? artist, CancellationToken ct)
     {
         var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
         var json = await Http.GetStringAsync(
             $"https://itunes.apple.com/search?term={query}&media=music&entity=song&limit=8", ct);
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
-            return null;
+            return (null, 0);
 
+        int minScore = string.IsNullOrWhiteSpace(artist) ? 3 : 5;
         var best = 0;
         string? bestUrl = null;
         foreach (var item in results.EnumerateArray())
         {
             var score = Score(title, artist, Str(item, "trackName"), Str(item, "artistName"));
             var art = Str(item, "artworkUrl100");
-            if (score <= best || score < 3 || art == null)
+            if (score <= best || score < minScore || art == null)
                 continue;
             best = score;
             // 100x100bb.jpg — превью; тот же файл в 600x600bb.jpg заметно приятнее на обоях.
             bestUrl = art.Replace("100x100bb", "600x600bb", StringComparison.OrdinalIgnoreCase);
         }
-        return bestUrl == null ? null : await DownloadAsync(bestUrl, ct);
+        var bytes = bestUrl == null ? null : await DownloadAsync(bestUrl, ct);
+        return (bytes, bytes != null ? best : 0);
     }
 
     /// <summary>
     /// Genius: обложки есть почти у всех песен, у которых там есть текст, — в том числе у тех, что не продаются
     /// в Deezer и Apple Music. Как и с текстом, берём только песню с тем же названием и исполнителем.
     /// </summary>
-    private static async Task<byte[]?> FromGeniusAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, int Score)> FromGeniusAsync(string title, string? artist, CancellationToken ct)
     {
         var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
         var json = await Http.GetStringAsync($"https://genius.com/api/search/song?q={query}&per_page=5", ct);
@@ -183,8 +198,9 @@ internal static class CoverArtService
         if (!doc.RootElement.TryGetProperty("response", out var response) ||
             !response.TryGetProperty("sections", out var sections) || sections.GetArrayLength() == 0 ||
             !sections[0].TryGetProperty("hits", out var hits))
-            return null;
+            return (null, 0);
 
+        int minScore = string.IsNullOrWhiteSpace(artist) ? 3 : 5;
         var best = 0;
         string? bestUrl = null;
         foreach (var hit in hits.EnumerateArray())
@@ -196,15 +212,16 @@ internal static class CoverArtService
             var score = Score(title, artist, Str(result, "title"), foundArtist);
             var art = Str(result, "song_art_image_url");
             // У песен без своей обложки Genius подставляет общую заглушку
-            if (score <= best || art == null || art.Contains("default_cover", StringComparison.OrdinalIgnoreCase))
+            if (score <= best || score < minScore || art == null || art.Contains("default_cover", StringComparison.OrdinalIgnoreCase))
                 continue;
             best = score;
             bestUrl = art;
         }
         // Совпало только название — у известных названий («Numb», «Home») это почти всегда другая песня
-        if (best < (string.IsNullOrWhiteSpace(artist) ? 3 : 4))
-            return null;
-        return bestUrl == null ? null : await DownloadAsync(bestUrl, ct);
+        if (best < minScore || bestUrl == null)
+            return (null, 0);
+        var bytes = await DownloadAsync(bestUrl, ct);
+        return (bytes, bytes != null ? best : 0);
     }
 
     private static async Task<byte[]?> DownloadAsync(string url, CancellationToken ct)
@@ -231,9 +248,12 @@ internal static class CoverArtService
         if (wanted.Length < 2 || found.Length < 2)
             return 0;
         int score;
-        if (wanted == found)
+        var wantedNoSpace = wanted.Replace(" ", "");
+        var foundNoSpace = found.Replace(" ", "");
+        if (wanted == found || (wantedNoSpace.Length >= 2 && wantedNoSpace == foundNoSpace))
             score = 3;
-        else if (wanted.Length >= 5 && (wanted.Contains(found) || found.Contains(wanted)))
+        else if (wanted.Length >= 5 && (wanted.Contains(found) || found.Contains(wanted) ||
+                 (wantedNoSpace.Length >= 5 && (wantedNoSpace.Contains(foundNoSpace) || foundNoSpace.Contains(wantedNoSpace)))))
             score = 2;
         else
             return 0;
@@ -242,9 +262,12 @@ internal static class CoverArtService
         var foundArtist = Norm(candidateArtist);
         if (wantedArtist.Length > 0 && foundArtist.Length > 0)
         {
-            if (wantedArtist == foundArtist)
+            var wantedArtistNoSpace = wantedArtist.Replace(" ", "");
+            var foundArtistNoSpace = foundArtist.Replace(" ", "");
+            if (wantedArtist == foundArtist || (wantedArtistNoSpace.Length >= 2 && wantedArtistNoSpace == foundArtistNoSpace))
                 score += 3;
-            else if (wantedArtist.Contains(foundArtist) || foundArtist.Contains(wantedArtist))
+            else if (wantedArtist.Contains(foundArtist) || foundArtist.Contains(wantedArtist) ||
+                     (wantedArtistNoSpace.Length >= 3 && (wantedArtistNoSpace.Contains(foundArtistNoSpace) || foundArtistNoSpace.Contains(wantedArtistNoSpace))))
                 score += 2;
         }
         return score;

@@ -37,6 +37,7 @@ public partial class FlyoutWindow : FluentWindow
             return;
         _hiddenAt = Environment.TickCount64;
         Hide();
+        App.TrimMemory();
     }
 
     private void PlaceNearTray()

@@ -139,6 +139,7 @@ public sealed class MediaSessionService : IDisposable
     }
 
     public bool IsAvailable => _session != null;
+    public GlobalSystemMediaTransportControlsSession? Session => _session;
     public MusicSource Source => _source;
     public bool IsPlaying { get; private set; }
     public string? Title { get; private set; }
@@ -573,40 +574,52 @@ public sealed class MediaSessionService : IDisposable
 
         // YouTube отдаёт в медиа-сеансе фавикон сайта, а на обоях нужна обложка трека — ищем её в каталогах.
         // Так же с другими сайтами в браузере, если вместо обложки пришёл значок браузера,
-        // и с любым плеером, если обложка мелкая: Chrome ужимает её до 150×150, Spotify отдаёт 300×300,
-        // а на обоях она растягивается до 550 и больше.
+        // или если у трека в браузере обложка мелкая (Chrome ужимает её до 150×150).
+        // Родную обложку Spotify и других десктопных плееров не подменяем: плеер отдаёт настоящую обложку трека.
         if (title != null && (newTrack || sourceChanged || _catalogKey != key) &&
-            (_source == MusicSource.YouTube || (browser && Cover == null) || (Cover != null && PixelSize(Cover) < SharpCover)))
+            (_source == MusicSource.YouTube || Cover == null || (browser && Cover != null && PixelSize(Cover) < SharpCover)))
         {
             var variants = Candidates(title, artist).Take(4).ToList();
-            // Песня из описания ролика точнее любого прочтения названия — ищем её первой
-            if (Video is var (videoName, videoChannel, videoThumb) &&
-                await YouTubeService.FindSongAsync(videoName, videoChannel, videoThumb) is { } song)
-            {
-                if (_disposed || session != _session || version != _refreshVersion)
-                    return;
-                variants.Insert(0, (song.Title, song.Artist));
-            }
+            // Сначала ищем в каталогах (Deezer, iTunes, Genius) по названию и исполнителю:
+            // они отвечают за доли секунды, тогда как поиск по самому YouTube может идти секундами
             var (art, failed) = await CoverArtService.LookUpAsync(variants);
             if (_disposed || session != _session || version != _refreshVersion)
                 return;
+
+            bool frame = false;
+            // Если по названию обложка не нашлась и это YouTube — только тогда заглядываем на YouTube:
+            // проверяем блок «Музыка» в описании ролика или берём стоп-кадр
+            if (art == null && _source == MusicSource.YouTube)
+            {
+                if (Video is var (videoName, videoChannel, videoThumb) &&
+                    await YouTubeService.FindSongAsync(videoName, videoChannel, videoThumb) is { } song)
+                {
+                    if (_disposed || session != _session || version != _refreshVersion)
+                        return;
+                    var songVariants = new[] { (song.Title, song.Artist) };
+                    var (songArt, songFailed) = await CoverArtService.LookUpAsync(songVariants);
+                    if (_disposed || session != _session || version != _refreshVersion)
+                        return;
+                    art = songArt;
+                    failed |= songFailed;
+                }
+
+                if (art == null && !failed && _videoTitle is { } videoTitle)
+                {
+                    var channel = _videoChannel;
+                    art = await YouTubeService.FindCoverAsync(videoTitle, channel, _thumb);
+                    if (_disposed || session != _session || version != _refreshVersion)
+                        return;
+                    frame = art != null;
+                }
+            }
+
             // Каталоги не ответили — трек не считаем проверенным, иначе он остался бы без обложки до конца.
             // За долгий микс на YouTube запросов набирается много, и лимиты каталогов срабатывают
             if (failed)
                 _coverRetry.Start();
             else
                 _catalogKey = key;
-            // Официальной обложки нет (неофициальный клип, кавер, просто видео) — берём кадр ролика в полном размере.
-            // Браузер прислал его крошечным, и по нему же сверяем, что нашёлся тот самый ролик
-            bool frame = false;
-            if (art == null && !failed && _source == MusicSource.YouTube && _videoTitle is { } videoTitle && _thumb is { } thumb)
-            {
-                var channel = _videoChannel;
-                art = await YouTubeService.FindCoverAsync(videoTitle, channel, thumb);
-                if (_disposed || session != _session || version != _refreshVersion)
-                    return;
-                frame = art != null;
-            }
             // Не нашлось в каталогах — остаётся то, что прислал плеер
             if (art != null || _source == MusicSource.YouTube)
             {
@@ -661,24 +674,48 @@ public sealed class MediaSessionService : IDisposable
         // На YouTube исполнитель нередко уже в названии: «Кино - Группа крови» при канале «Кино - Topic».
         if (source is MusicSource.YouTube or MusicSource.YouTubeMusic && !string.IsNullOrWhiteSpace(artist))
         {
+            bool matched = false;
             foreach (var separator in new[] { " — ", " – ", " - ", " | " })
             {
                 var prefix = artist + separator;
                 if (title.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && title.Length > prefix.Length)
                 {
                     title = title[prefix.Length..].Trim();
+                    matched = true;
                     break;
                 }
                 // Канал «Wiz Khalifa Music», «Мот TV», «Artist Records»: имя канала начинается с исполнителя из названия
                 int i = title.IndexOf(separator, StringComparison.Ordinal);
-                if (i >= 3 && i + separator.Length < title.Length)
+                if (i >= 2 && i + separator.Length < title.Length)
                 {
                     var left = title[..i].Trim();
                     if (artist.Length > left.Length && artist.StartsWith(left + " ", StringComparison.OrdinalIgnoreCase))
                     {
                         artist = left;
                         title = title[(i + separator.Length)..].Trim();
+                        matched = true;
                         break;
+                    }
+                }
+            }
+
+            // Канал не совпал с исполнителем (например, ролик залил канал «ХАРТ_hack» или «Rhymes Music»),
+            // а в названии ролика чётко указано «Исполнитель - Название песни»
+            if (!matched)
+            {
+                foreach (var separator in new[] { " — ", " – ", " - ", " | " })
+                {
+                    int i = title.IndexOf(separator, StringComparison.Ordinal);
+                    if (i >= 2 && i + separator.Length < title.Length)
+                    {
+                        var left = title[..i].Trim();
+                        var right = title[(i + separator.Length)..].Trim();
+                        if (left.Length >= 2 && right.Length >= 2)
+                        {
+                            artist = left;
+                            title = right;
+                            break;
+                        }
                     }
                 }
             }

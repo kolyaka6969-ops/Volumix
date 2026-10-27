@@ -97,7 +97,9 @@ internal sealed class DesktopPointer : IDisposable
         {
             try
             {
-                if (Handle(msg, Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam).Pt))
+                int x = Marshal.ReadInt32(lParam);
+                int y = Marshal.ReadInt32(lParam, 4);
+                if (Handle(msg, new POINT { X = x, Y = y }))
                     return new IntPtr(1); // наше нажатие — Explorer его не видит
             }
             catch (Exception ex)

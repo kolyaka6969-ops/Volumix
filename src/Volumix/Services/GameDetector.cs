@@ -27,6 +27,17 @@ internal sealed class GameDetector
 
     private static readonly string[] NotGameFolders = { @"\epic games\launcher\", @"\riot client\" };
 
+    /// <summary>
+    /// Программы, которые никогда не считаются играми. В список игр Xbox Game Bar (GameConfigStore) Windows нередко
+    /// заносит браузеры, Discord, плееры или редакторы — из-за этого островок скрывался при клике по браузеру.
+    /// </summary>
+    internal static readonly HashSet<string> ExcludedExes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "chrome", "chromium", "msedge", "firefox", "opera", "brave", "vivaldi", "browser", "yandexbrowser", "thorium",
+        "zen", "waterfox", "librewolf", "explorer", "devenv", "code", "spotify", "telegram", "discord", "steam",
+        "epicgameslauncher", "antigravity", "taskmgr", "cmd", "powershell", "windowsterminal",
+    };
+
     /// <summary>Библиотеки, которые грузят только игры: движки, игровые SDK магазинов, LWJGL у Minecraft.</summary>
     private static readonly HashSet<string> GameModules = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -47,25 +58,39 @@ internal sealed class GameDetector
     private HashSet<string> _gameBar = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _gameBarRead = DateTime.MinValue;
     private readonly uint _ownProcess = (uint)Environment.ProcessId;
+    private IntPtr _lastForegroundHwnd;
+    private bool _lastForegroundResult;
+    private DateTime _lastForegroundTime;
 
     /// <summary>Сейчас на переднем плане игра или полноэкранное окно.</summary>
     public bool IsGameInFront()
     {
         try
         {
+            var now = DateTime.UtcNow;
+            var hwnd = NativeMethods.GetForegroundWindow();
+            if (hwnd == _lastForegroundHwnd && now - _lastForegroundTime < TimeSpan.FromMilliseconds(1500))
+                return _lastForegroundResult;
+
+            bool isGame = false;
             if (NativeMethods.SHQueryUserNotificationState(out int state) == 0 &&
                 state is NativeMethods.QUNS_RUNNING_D3D_FULL_SCREEN or NativeMethods.QUNS_PRESENTATION_MODE)
-                return true;
+            {
+                isGame = true;
+            }
+            else if (hwnd != IntPtr.Zero && !ShellClasses.Contains(NativeMethods.GetWindowClass(hwnd)))
+            {
+                NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
+                if (pid != 0 && pid != _ownProcess)
+                {
+                    isGame = IsFullscreen(hwnd) || IsGameProcess(pid);
+                }
+            }
 
-            var hwnd = NativeMethods.GetForegroundWindow();
-            if (hwnd == IntPtr.Zero || ShellClasses.Contains(NativeMethods.GetWindowClass(hwnd)))
-                return false;
-            NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
-            if (pid == 0 || pid == _ownProcess)
-                return false;
-            // QUNS_BUSY Windows ставит и полноэкранному окну без рамки — но и рабочему столу при некоторых обоях,
-            // поэтому полноэкранность проверяем сами
-            return IsFullscreen(hwnd) || IsGameProcess(pid);
+            _lastForegroundHwnd = hwnd;
+            _lastForegroundResult = isGame;
+            _lastForegroundTime = now;
+            return isGame;
         }
         catch (Exception)
         {
@@ -96,6 +121,10 @@ internal sealed class GameDetector
         var path = NativeMethods.GetProcessPath(pid);
         if (path == null)
             return false;
+        var exe = Path.GetFileNameWithoutExtension(path);
+        if (ExcludedExes.Contains(exe))
+            return false;
+
         var now = DateTime.UtcNow;
         // Номер процесса мог достаться другой программе — тогда путь другой
         if (_processes.TryGetValue(pid, out var cached) && cached.Path == path &&
@@ -113,10 +142,12 @@ internal sealed class GameDetector
     internal static bool IsGamePath(string path)
     {
         var lower = path.ToLowerInvariant();
+        var name = Path.GetFileNameWithoutExtension(lower);
+        if (ExcludedExes.Contains(name))
+            return false;
         if (NotGameFolders.Any(lower.Contains))
             return false;
         // Unreal Engine называет exe игры «Имя-Win64-Shipping.exe»
-        var name = Path.GetFileNameWithoutExtension(lower);
         return name.EndsWith("-win64-shipping") || name.EndsWith("-wingdk-shipping") || GameFolders.Any(lower.Contains);
     }
 
@@ -125,6 +156,10 @@ internal sealed class GameDetector
     /// <summary>Xbox Game Bar сам ведёт список программ, которые он счёл играми.</summary>
     private bool IsGameBarGame(string path)
     {
+        var exeName = Path.GetFileNameWithoutExtension(path);
+        if (ExcludedExes.Contains(exeName))
+            return false;
+
         if (DateTime.UtcNow - _gameBarRead > GameBarRefresh)
         {
             _gameBarRead = DateTime.UtcNow;

@@ -26,7 +26,7 @@ internal static class YouTubeService
     private const int Candidates = 6;
     /// <summary>Средняя разница цвета (0–255), при которой картинки ещё считаются одним кадром.</summary>
     private const double MaxDifference = 28;
-    private const int CacheLimit = 100;
+    private const int CacheLimit = 25;
 
     private static readonly HttpClient Http = CreateClient();
     // Запросы, а не ответы: обои и поиск обложки спрашивают про один ролик одновременно — на YouTube идём один раз
@@ -45,7 +45,7 @@ internal static class YouTubeService
     private static HttpClient CreateClient()
     {
         var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All, UseCookies = false };
-        var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+        var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36");
         http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("ru,en;q=0.8");
         // Без него в Европе вместо выдачи приходит страница согласия на куки
@@ -63,19 +63,29 @@ internal static class YouTubeService
             var id = await FindVideoIdAsync(title, channel, thumbnail);
             if (id == null)
                 return null;
-            var html = await Http.GetStringAsync("https://www.youtube.com/watch?v=" + id);
-            return ParseMusicSection(html);
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3.5));
+                var response = await Http.GetAsync("https://www.youtube.com/watch?v=" + id, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                    return null;
+                var html = await response.Content.ReadAsStringAsync(cts.Token);
+                return ParseMusicSection(html);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         });
 
     /// <summary>
-    /// Кадр ролика 1280×720 (или 480×360, если большого нет). null — ролик не нашёлся или кадр из браузера
-    /// не похож ни на один найденный: так чужой клип не подставится. Никогда не бросает исключений.
+    /// Кадр ролика 1280×720 (или 480×360, если большого нет). null — ролик не нашёлся.
+    /// Никогда не бросает исключений.
     /// </summary>
-    public static Task<byte[]?> FindCoverAsync(string title, string? channel, byte[] thumbnail) =>
+    public static Task<byte[]?> FindCoverAsync(string title, string? channel, byte[]? thumbnail = null) =>
         Cached(Covers, Key(title, channel), async () =>
         {
-            // Для обложки ролик обязан совпасть с кадром — одного названия мало
-            if (await FindVideoIdAsync(title, channel, thumbnail, needFrame: true) is not { } id)
+            if (await FindVideoIdAsync(title, channel, thumbnail) is not { } id)
                 return null;
             // maxres есть не у всех роликов; hq — с чёрными полосами, но всё равно лучше крошечного
             return await GetAsync($"https://i.ytimg.com/vi/{id}/maxresdefault.jpg")
@@ -92,15 +102,18 @@ internal static class YouTubeService
             var query = Uri.EscapeDataString(channel == null ? title : $"{title} {channel}");
             var html = await Http.GetStringAsync("https://www.youtube.com/results?search_query=" + query);
             var results = ParseSearch(html).Take(Candidates).ToList();
+            if (results.Count == 0)
+                return null;
 
             using var reference = thumbnail == null ? null : Fingerprint(thumbnail);
             if (reference != null)
             {
                 string? best = null;
                 double bestDifference = MaxDifference;
-                foreach (var (id, _) in results)
+                var previewTasks = results.Select(async r => (r.Id, Bytes: await GetAsync($"https://i.ytimg.com/vi/{r.Id}/mqdefault.jpg"))).ToList();
+                var previews = await Task.WhenAll(previewTasks);
+                foreach (var (id, preview) in previews)
                 {
-                    var preview = await GetAsync($"https://i.ytimg.com/vi/{id}/mqdefault.jpg");
                     using var candidate = preview == null ? null : Fingerprint(preview);
                     if (candidate == null)
                         continue;
@@ -108,14 +121,18 @@ internal static class YouTubeService
                     if (difference < bestDifference)
                         (best, bestDifference) = (id, difference);
                 }
-                if (best != null || needFrame)
+                if (best != null)
                     return best;
             }
-            else if (needFrame)
+            if (needFrame)
                 return null;
 
             var normalized = Normalize(title);
-            return results.FirstOrDefault(r => Normalize(r.Title) == normalized).Id;
+            var matched = results.FirstOrDefault(r => Normalize(r.Title) == normalized);
+            if (matched.Id != null)
+                return matched.Id;
+
+            return results.FirstOrDefault().Id;
         });
 
     /// <summary>Ролики из выдачи поиска: id и название.</summary>

@@ -26,6 +26,7 @@ public partial class App : Application
     private MediaSessionService? _media;
     private DesktopLyricsService? _desktopLyrics;
     private MediaIslandService? _island;
+    private DispatcherTimer? _trimTimer;
 
     public static MixerViewModel Mixer { get; private set; } = null!;
     public static SettingsViewModel SettingsVm { get; private set; } = null!;
@@ -82,7 +83,7 @@ public partial class App : Application
             Controls = SettingsVm.DesktopControls,
             Enabled = SettingsVm.DesktopLyrics,
         };
-        _island = new MediaIslandService(Dispatcher)
+        _island = new MediaIslandService(Dispatcher, _media)
         {
             PausedLimit = IslandPausedLimit(),
             IslandWidth = SettingsService.Current.IslandWidth,
@@ -134,6 +135,18 @@ public partial class App : Application
         };
         _media.Start();
 
+        _trimTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(10)
+        };
+        _trimTimer.Tick += (_, _) =>
+        {
+            _trimTimer.Interval = TimeSpan.FromMinutes(5);
+            if (_main?.IsVisible != true && _flyout?.IsVisible != true && _tray?.IsMenuVisible != true)
+                TrimMemory();
+        };
+        _trimTimer.Start();
+
         if (!e.Args.Contains(AutostartService.TrayArgument, StringComparer.OrdinalIgnoreCase))
             ShowMain(AppPage.Mixer);
     }
@@ -177,7 +190,26 @@ public partial class App : Application
     public void HideWindows()
     {
         _flyout?.HideFlyout();
+        _tray?.HideMenu();
         _main?.Hide();
+        TrimMemory();
+    }
+
+    /// <summary>
+    /// Сбрасывает неиспользуемые страницы памяти и сжимает рабочий набор процесса,
+    /// чтобы приложение занимало минимум оперативной памяти в фоновом режиме.
+    /// </summary>
+    public static void TrimMemory()
+    {
+        try
+        {
+            GC.Collect(2, GCCollectionMode.Aggressive, false, false);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Aggressive, false, false);
+            NativeMethods.SetProcessWorkingSetSize(NativeMethods.GetCurrentProcess(), (IntPtr)(-1), (IntPtr)(-1));
+            NativeMethods.EmptyWorkingSet(NativeMethods.GetCurrentProcess());
+        }
+        catch (Exception) { }
     }
 
     private void OnHotkey(HotkeyBinding b)

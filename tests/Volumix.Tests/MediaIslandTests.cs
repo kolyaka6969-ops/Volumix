@@ -5,6 +5,14 @@ namespace Volumix.Tests;
 
 public class MediaIslandTests
 {
+    [Fact]
+    public void ExcludesBrowsersFromGames()
+    {
+        Assert.Contains("chrome", GameDetector.ExcludedExes);
+        Assert.Contains("msedge", GameDetector.ExcludedExes);
+        Assert.Contains("firefox", GameDetector.ExcludedExes);
+    }
+
     [Theory]
     [InlineData(@"C:\Program Files (x86)\Steam\steamapps\common\Terraria\Terraria.exe", true)]
     [InlineData(@"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe", true)]
