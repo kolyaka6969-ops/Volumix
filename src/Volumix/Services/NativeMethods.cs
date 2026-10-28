@@ -85,6 +85,7 @@ internal static class NativeMethods
     public const uint GA_PARENT = 1;
     public const uint SMTO_NORMAL = 0;
     public const uint SPI_SETDESKWALLPAPER = 0x14;
+    public const uint SPI_GETDESKWALLPAPER = 0x73;
     public const uint SPIF_UPDATEINIFILE = 0x1;
     public const int DPI_HOSTING_BEHAVIOR_MIXED = 1;
     public const int WM_STYLECHANGING = 0x007C;
@@ -166,6 +167,16 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool SystemParametersInfo(uint action, uint param, string? value, uint winIni);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SystemParametersInfoW")]
+    private static extern bool SystemParametersInfo(uint action, uint param, StringBuilder value, uint winIni);
+
+    /// <summary>Путь к текущим обоям; пустая строка — сплошной цвет; null — не удалось узнать.</summary>
+    public static string? GetWallpaperPath()
+    {
+        var sb = new StringBuilder(1024);
+        return SystemParametersInfo(SPI_GETDESKWALLPAPER, (uint)sb.Capacity, sb, 0) ? sb.ToString() : null;
+    }
 
     [DllImport("user32.dll")]
     public static extern int SetThreadDpiHostingBehavior(int behavior);

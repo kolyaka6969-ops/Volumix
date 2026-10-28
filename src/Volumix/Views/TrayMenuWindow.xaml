@@ -104,7 +104,7 @@
                         <TextBlock Grid.Column="1" Text="Текст на рабочем столе" FontSize="13.5" Foreground="#FFFFFF"
                                    VerticalAlignment="Center" Margin="6,0,0,0" />
                         <TextBlock x:Name="LyricsCheck" Grid.Column="2" Text="&#xE73E;" FontFamily="{StaticResource IconFont}"
-                                   FontSize="12" Foreground="#3B82F6" VerticalAlignment="Center" Margin="0,0,2,0" />
+                                   FontSize="14" Foreground="#60A5FA" VerticalAlignment="Center" Margin="0,0,2,0" />
                     </Grid>
                 </Button>
 
@@ -120,7 +120,7 @@
                         <TextBlock Grid.Column="1" Text="Островок с плеером" FontSize="13.5" Foreground="#FFFFFF"
                                    VerticalAlignment="Center" Margin="6,0,0,0" />
                         <TextBlock x:Name="IslandCheck" Grid.Column="2" Text="&#xE73E;" FontFamily="{StaticResource IconFont}"
-                                   FontSize="12" Foreground="#3B82F6" VerticalAlignment="Center" Margin="0,0,2,0" />
+                                   FontSize="14" Foreground="#60A5FA" VerticalAlignment="Center" Margin="0,0,2,0" />
                     </Grid>
                 </Button>
 

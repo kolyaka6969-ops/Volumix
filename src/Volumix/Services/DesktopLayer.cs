@@ -21,8 +21,9 @@ internal sealed class DesktopLayer : IDisposable
     /// (Raised). Раньше: по сообщению 0x052C Progman создаёт WorkerW позади значков, окно встаёт в него поверх всего,
     /// что там уже есть — в том числе поверх Wallpaper Engine и Lively. У родителя без своей поверхности
     /// (WS_EX_NOREDIRECTIONBITMAP) окно должно быть слоистым (Layered), иначе его не видно.
+    /// IconsHost — окно, в котором лежали значки: если Explorer их перенёс, место надо искать заново.
     /// </summary>
-    private sealed record Target(IntPtr Parent, IntPtr Icons, bool Raised, bool Layered);
+    private sealed record Target(IntPtr Parent, IntPtr Icons, IntPtr IconsHost, bool Raised, bool Layered);
 
     private const uint WM_SPAWN_WORKER = 0x052C;
     /// <summary>
@@ -76,7 +77,9 @@ internal sealed class DesktopLayer : IDisposable
     private void Ensure()
     {
         var hwnd = Handle;
-        if (hwnd != IntPtr.Zero && _target is { } t && IsWindow(hwnd) && IsWindow(t.Icons) && GetAncestor(hwnd, GA_PARENT) == t.Parent)
+        // Значки могли переехать: Explorer при запуске сначала держит их в Progman и лишь потом переносит в WorkerW
+        if (hwnd != IntPtr.Zero && _target is { } t && IsWindow(hwnd) && IsWindow(t.Icons) &&
+            GetAncestor(hwnd, GA_PARENT) == t.Parent && GetAncestor(t.Icons, GA_PARENT) == t.IconsHost)
         {
             Place(hwnd, t, onlyIfMoved: true);
             return;
@@ -200,58 +203,51 @@ internal sealed class DesktopLayer : IDisposable
         var progman = FindWindow("Progman", null);
         if (progman == IntPtr.Zero)
             return null;
-
-        // Windows 10 и ранние Windows 11: 0x052C с параметрами (0, 0) заставляет Explorer создать WorkerW позади значков.
-        // Windows 11 24H2+: параметры (0xD, 1) для DirectComposition.
-        SendMessageTimeout(progman, WM_SPAWN_WORKER, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out _);
-        if (Environment.OSVersion.Version.Build >= 22000)
-            SendMessageTimeout(progman, WM_SPAWN_WORKER, new IntPtr(0xD), new IntPtr(1), SMTO_NORMAL, 1000, out _);
+        // Параметры (0xD, 1) — как у Wallpaper Engine и Lively: на Windows 11 24H2 только они и работают. Часть сборок
+        // Windows 10 на них слой не создаёт — тогда просим ещё раз, с (0, 0)
+        SendMessageTimeout(progman, WM_SPAWN_WORKER, new IntPtr(0xD), new IntPtr(1), SMTO_NORMAL, 1000, out _);
 
         if (NoSurface(progman))
         {
             var icons = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
             if (icons != IntPtr.Zero)
-                return new Target(progman, icons, Raised: true, Layered: true);
+                return new Target(progman, icons, progman, Raised: true, Layered: true);
             // Значки не в Progman: их перенесла другая программа обоев — ищем, где они теперь
         }
 
+        var found = FindWorker();
+        if (found.Worker == IntPtr.Zero && !NoSurface(found.Host))
+        {
+            SendMessageTimeout(progman, WM_SPAWN_WORKER, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out _);
+            found = FindWorker();
+        }
+        var (icons2, host, worker) = found;
+        if (icons2 == IntPtr.Zero)
+            return null;
+        if (worker != IntPtr.Zero)
+            return new Target(worker, icons2, host, Raised: false, Layered: NoSurface(worker));
+        // Слоя позади значков нет. Встать под значки в их же окне можно, только если оно без своей поверхности
+        // (DirectComposition, Windows 11 24H2+). В обычном окне Windows 10 слоистое дочернее окно рисуется поверх
+        // всех соседей, и значки пропадают. Explorer ещё запускается — попробуем на следующей проверке
+        return NoSurface(host) ? new Target(host, icons2, host, Raised: true, Layered: true) : null;
+    }
+
+    /// <summary>Значки, окно с ними и слой WorkerW позади этого окна (если есть).</summary>
+    private static (IntPtr Icons, IntPtr Host, IntPtr Worker) FindWorker()
+    {
         IntPtr defView = IntPtr.Zero, host = IntPtr.Zero, worker = IntPtr.Zero;
         EnumWindows((top, _) =>
         {
             var view = FindWindowEx(top, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (view != IntPtr.Zero)
-            {
-                defView = view;
-                host = top;
-                // На Windows 10 WorkerW создаётся позади окна со значками в Z-порядке
-                worker = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
-                if (worker == IntPtr.Zero)
-                {
-                    // Проверяем следующее окно в Z-порядке вниз
-                    var next = GetWindow(top, GW_HWNDNEXT);
-                    while (next != IntPtr.Zero)
-                    {
-                        if (GetWindowClass(next) == "WorkerW")
-                        {
-                            worker = next;
-                            break;
-                        }
-                        next = GetWindow(next, GW_HWNDNEXT);
-                    }
-                }
-            }
-            return true;
+            if (view == IntPtr.Zero)
+                return true;
+            defView = view;
+            host = top;
+            // Первый WorkerW ниже окна со значками в Z-порядке
+            worker = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
+            return false;
         }, IntPtr.Zero);
-
-        if (worker != IntPtr.Zero)
-            return new Target(worker, defView, Raised: false, Layered: NoSurface(worker));
-
-        // Слоя позади значков нет: вставать прямо под значки (Raised) можно ТОЛЬКО на Windows 11 с DirectComposition (NoSurface).
-        // На Windows 10 без DirectComposition вставать под значки в Progman нельзя — WPF перекроет SHELLDLL_DefView и значки пропадут!
-        if (NoSurface(host) && defView != IntPtr.Zero)
-            return new Target(host, defView, Raised: true, Layered: true);
-
-        return null;
+        return (defView, host, worker);
     }
 
     private static bool NoSurface(IntPtr hwnd) =>
@@ -271,19 +267,10 @@ internal sealed class DesktopLayer : IDisposable
             _source.Dispose();
         _source = null;
         _target = null;
-        // В старой схеме WorkerW сам не перерисовывается и оставил бы последний кадр. Как в Lively:
-        // пустая строка ("") заставляет Windows заново применить текущие обои без падения по access violation.
-        if (!raised)
-        {
-            try
-            {
-                SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, "", SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-            }
-            catch (Exception ex)
-            {
-                App.LogError(ex);
-            }
-        }
+        // В старой схеме WorkerW сам не перерисовывается и оставил бы последний кадр — заново ставим текущие обои.
+        // Путь передаём явно: пустая строка убрала бы обои совсем, а null на части систем ставит обои по умолчанию
+        if (!raised && GetWallpaperPath() is { } wallpaper)
+            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaper, SPIF_UPDATEINIFILE);
     }
 
     public void Dispose()

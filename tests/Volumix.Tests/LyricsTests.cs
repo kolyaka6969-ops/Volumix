@@ -429,105 +429,102 @@ public class LyricsTests
             Assert.True(high > low * 2, $"15 FPS — {low} сдвигов, 60 FPS — {high}");
     }
 
-    [Fact]
-    public void DetectsAndConvertsTransliteratedRussianLyrics()
-    {
-        string translit = "Ya prishol daty etu piesnyu\nIz mira gryoz.\nIz khrustalynih slyoz.\nDlya lyubvi.";
-        Assert.True(LyricsService.IsTransliteratedRussian(translit));
-        Assert.False(LyricsService.IsTransliteratedRussian("In the end it doesn't even matter"));
-        Assert.False(LyricsService.IsTransliteratedRussian("Я пришел дать эту песню"));
+    // Запись lrclib «The 7th Element — Vitas»: транслит, и куплет уложен в три секунды
+    private const string BrokenTranslitLrc =
+        "[00:29.18] Ya prishol daty etu piesnyu\n[00:36.34] Ya prishol daty etu piesnyu\n[00:58.99] Iz mira gryoz.\n" +
+        "[00:59.43] Ya prishol daty etu piesnyu\n[01:00.18] Iz khrustalynih slyoz.\n[01:00.81] Ya prishol daty etu piesnyu\n" +
+        "[01:01.46] Dlya lyubvi.\n[01:02.15] Ya prishol daty etu piesnyu.";
 
-        string converted = LyricsService.ConvertTransliteratedToCyrillic(translit);
-        Assert.Contains("Я пришел дать эту песню", converted);
-        Assert.Contains("Из мира грез", converted);
-        Assert.Contains("Из хрустальных слез", converted);
-        Assert.Contains("Для любви", converted);
+    private const string CyrillicLrc =
+        "[00:15.70] Я пришёл дать эту песню\n[00:22.85] Я пришёл дать эту песню\n[01:44.41] Из мира грёз\n[01:48.71] Из хрустальных слёз";
+
+    [Fact]
+    public void DetectsTransliteration()
+    {
+        Assert.True(LyricsService.IsTransliteration(new[] { "Ya prishol daty etu piesnyu", "Iz mira gryoz.", "Iz khrustalynih slyoz.", "Dlya lyubvi." }));
+        Assert.True(LyricsService.IsTransliteration(new[] { "Zhit' kak khochetsya, tebya lyublyu", "Ya ne znayu, chto skazat'" }));
+        Assert.False(LyricsService.IsTransliteration(new[] { "I'm tired of being what you want me to be", "Feeling so faithless, lost under the surface" }));
+        Assert.False(LyricsService.IsTransliteration(new[] { "Yo te quiero, ya lo sé", "Cuando la noche llega a mi corazón", "No puedo vivir sin ti, mi amor" }));
+        Assert.False(LyricsService.IsTransliteration(new[] { "Я пришёл дать эту песню", "Ya" }));
     }
 
     [Fact]
-    public void DetectsBrokenFastTransitionSync()
+    public void DetectsBrokenSync()
     {
-        // 5 transitions under 0.75s — broken sync like in LRCLIB entry for The 7th Element
-        var brokenLines = new List<LyricLine>
-        {
-            new(TimeSpan.FromSeconds(29), "Ya prishol"),
-            new(TimeSpan.FromSeconds(58.99), "Iz mira gryoz"),
-            new(TimeSpan.FromSeconds(59.43), "Ya prishol"),
-            new(TimeSpan.FromSeconds(60.18), "Iz khrustalynih"),
-            new(TimeSpan.FromSeconds(60.81), "Ya prishol"),
-            new(TimeSpan.FromSeconds(61.46), "Dlya lyubvi"),
-            new(TimeSpan.FromSeconds(62.15), "Ya prishol"),
-        };
-        Assert.True(LyricsService.IsBrokenSync(brokenLines, 252));
-
-        var goodLines = new List<LyricLine>
-        {
-            new(TimeSpan.FromSeconds(15), "Я пришел дать эту песню"),
-            new(TimeSpan.FromSeconds(22), "Я пришел дать эту песню"),
-            new(TimeSpan.FromSeconds(30), "Я пришел дать эту песню"),
-        };
-        Assert.False(LyricsService.IsBrokenSync(goodLines, 252));
+        Assert.True(LyricsService.IsBrokenSync(LyricsService.ParseLrc(BrokenTranslitLrc)));
+        Assert.False(LyricsService.IsBrokenSync(LyricsService.ParseLrc(CyrillicLrc)));
+        // Короткие паузы (пустые строки) — не битые метки
+        Assert.False(LyricsService.IsBrokenSync(LyricsService.ParseLrc("[00:10.00]раз\n[00:12.00]\n[00:12.30]два\n[00:12.60]\n[00:15.00]три")));
     }
 
+    /// <summary>Транслит с битыми метками у первого прочтения проигрывает синхронному тексту на кириллице у второго.</summary>
     [Fact]
-    public void PrefersCyrillicOverTransliteratedInPickVideo()
+    public void VideoPrefersCyrillicOverBrokenTransliteration()
     {
-        var transliterated = new List<LyricsService.LrcLibTrack>
+        var results = new List<LyricsService.LrcLibTrack>?[]
         {
-            new()
-            {
-                Duration = 250,
-                SyncedLyrics = "[00:29.18] Ya prishol daty etu piesnyu\n[00:58.99] Iz mira gryoz\n[00:59.43] Ya prishol\n[01:00.18] Iz khrustalynih\n[01:00.81] Dlya lyubvi"
-            }
+            new() { new() { Duration = 250, SyncedLyrics = BrokenTranslitLrc } },
+            new() { new() { Duration = 248, SyncedLyrics = CyrillicLrc } },
         };
-
-        var cyrillic = new List<LyricsService.LrcLibTrack>
-        {
-            new()
-            {
-                Duration = 248,
-                SyncedLyrics = "[00:15.50] Я пришел дать эту песню\n[00:22.67] Я пришел дать эту песню\n[01:44.41] Я пришел дать эту песню\n[01:48.71] Из мира грез"
-            }
-        };
-
-        var results = new List<LyricsService.LrcLibTrack>?[] { transliterated, cyrillic };
-        var picked = LyricsService.PickVideo(results, 248);
-
+        var picked = LyricsService.PickVideo(results, 249);
         Assert.NotNull(picked);
-        Assert.Equal(1, picked.Value.Index); // Index 1 (cyrillic) must be preferred over index 0 (transliterated)
-        Assert.Contains("Я пришел дать эту песню", picked.Value.Lyrics.Lines[0].Text);
+        Assert.Equal(1, picked.Value.Index);
+        Assert.Equal(LyricsStatus.Synced, picked.Value.Lyrics.Status);
+        Assert.Equal("Я пришёл дать эту песню", picked.Value.Lyrics.Lines[0].Text);
+    }
+
+    /// <summary>Есть только транслит с битыми метками — показываем его как есть, но без меток, а не со скачущими строками.</summary>
+    [Fact]
+    public void BrokenSyncShownAsPlain()
+    {
+        var results = new List<LyricsService.LrcLibTrack>?[] { new() { new() { Duration = 250, SyncedLyrics = BrokenTranslitLrc } } };
+        var picked = LyricsService.PickVideo(results, 249);
+        Assert.NotNull(picked);
+        Assert.Equal(LyricsStatus.Plain, picked.Value.Lyrics.Status);
+        Assert.Equal("Ya prishol daty etu piesnyu", picked.Value.Lyrics.Lines[0].Text);
+        Assert.True(LyricsService.Rank(picked.Value.Lyrics) >= LyricsService.TranslitPenalty);
     }
 
     [Fact]
-    public void ExpandsVitas7thElementAliases()
+    public void SearchVariantsDropLeadingArticle()
     {
-        var candidatesFromTitle = MediaSessionService.Candidates("Vitas - The 7th Element (2001)", null).Take(4).ToList();
-        Assert.Contains(("7 элемент", (string?)"Витас"), candidatesFromTitle);
-
-        var candidatesSeparate = MediaSessionService.Candidates("The 7th Element", "VITAS").Take(4).ToList();
-        Assert.Contains(("7 элемент", (string?)"Витас"), candidatesSeparate);
+        var variants = LyricsService.Variants("The 7th Element", "VITAS");
+        Assert.Contains(("7th Element", (string?)"VITAS"), variants);
+        Assert.Equal(variants.Count, variants.Distinct().Count());
+        Assert.Single(LyricsService.Variants("Numb", "Linkin Park"));
     }
 
     [Fact]
-    public void ConvertsTransliteratedRussianLyrics()
+    public void LyricsCacheRoundTrips()
     {
-        var rawLrc = """
-            [00:29.18] Ya prishol daty etu piesnyu
-            [00:58.99] Iz mira gryoz.
-            [01:06.01] Iz khrustalynh slyoz.
-            [01:21.05] Dlya lyubvi.
-            """;
-        var track = new LyricsService.LrcLibTrack
+        var synced = Lyrics.FromLrc(CyrillicLrc);
+        var back = LyricsCache.Parse(LyricsCache.Format(synced, 2));
+        Assert.NotNull(back);
+        Assert.Equal(2, back.Value.Index);
+        Assert.Equal(LyricsStatus.Synced, back.Value.Lyrics.Status);
+        Assert.Equal(synced.Lines, back.Value.Lyrics.Lines);
+
+        var plain = Lyrics.FromPlain("[Chorus]\nраз\n\nдва");
+        Assert.Equal(plain.Lines, LyricsCache.Parse(LyricsCache.Format(plain, 0))!.Value.Lyrics.Lines);
+        Assert.Same(Lyrics.NotFound, LyricsCache.Parse(LyricsCache.Format(Lyrics.NotFound, 0))!.Value.Lyrics);
+        Assert.Null(LyricsCache.Parse("мусор"));
+    }
+
+    /// <summary>Живой lrclib: у «The 7th Element» на нём только транслит с битыми метками, а нужен текст на кириллице.</summary>
+    [SkippableFact]
+    public async Task FindsCyrillicLyricsForVitas()
+    {
+        LyricsCache.Folder = Path.Combine(Path.GetTempPath(), "volumix-tests-" + Guid.NewGuid().ToString("N"));
+        var candidates = MediaSessionService.Candidates("The 7th Element", "VITAS").Take(4).ToList();
+        var (video, _) = await LyricsService.FindVideoAsync(candidates, TimeSpan.FromSeconds(249), CancellationToken.None);
+        var track = await LyricsService.FindAsync("The 7th Element", "VITAS", null, TimeSpan.FromSeconds(249), CancellationToken.None);
+        Skip.If(video.Status == LyricsStatus.Error || track.Status == LyricsStatus.Error, "lrclib.net недоступен");
+
+        foreach (var lyrics in new[] { video, track })
         {
-            Duration = 250,
-            SyncedLyrics = rawLrc
-        };
-        var lyrics = LyricsService.PickVideo(new[] { new List<LyricsService.LrcLibTrack> { track } }, 250);
-        Assert.NotNull(lyrics);
-        Assert.Equal("Я пришел дать эту песню", lyrics.Value.Lyrics.Lines[0].Text);
-        Assert.Equal("Из мира грез.", lyrics.Value.Lyrics.Lines[1].Text);
-        Assert.Equal("Из хрустальных слез.", lyrics.Value.Lyrics.Lines[2].Text);
-        Assert.Equal("Для любви.", lyrics.Value.Lyrics.Lines[3].Text);
+            Assert.Equal(LyricsStatus.Synced, lyrics.Status);
+            Assert.Contains(lyrics.Lines, l => l.Text.Contains("песню"));
+        }
     }
 
     private static void Pump(double seconds)

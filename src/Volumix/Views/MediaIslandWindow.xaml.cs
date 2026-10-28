@@ -397,7 +397,9 @@ public partial class MediaIslandWindow : Window
     private void Embed(IntPtr bar)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd == IntPtr.Zero || _embeddedIn == bar)
+        // Windows 10: панель задач — старое окно Explorer, прозрачное окно WPF в нём не рисуется и роняет Volumix.
+        // Остаёмся поверх панели
+        if (hwnd == IntPtr.Zero || _embeddedIn == bar || !Platform.CanEmbedInTaskbar)
             return;
         Unembed();
         Topmost = false;

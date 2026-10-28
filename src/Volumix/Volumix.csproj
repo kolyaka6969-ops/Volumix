@@ -15,9 +15,14 @@
     <AssemblyName>Volumix</AssemblyName>
     <RootNamespace>Volumix</RootNamespace>
     <Product>Volumix</Product>
-    <Version>1.6.3</Version>
-    <Description>Микшер громкости приложений для Windows 11</Description>
+    <Version>1.6.4</Version>
+    <Description>Микшер громкости приложений для Windows 10 и 11</Description>
     <Copyright>© 2026</Copyright>
+  </PropertyGroup>
+
+  <!-- Сборка для Windows 10: build.ps1 -Win10 (островок не вшивается в панель задач и на Windows 11) -->
+  <PropertyGroup Condition="'$(Win10Build)' == 'true'">
+    <DefineConstants>$(DefineConstants);WIN10</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

@@ -2,7 +2,10 @@
 
 #define AppName "Volumix"
 #ifndef AppVersion
-  #define AppVersion "1.6.3"
+  #define AppVersion "1.6.4"
+#endif
+#ifndef SetupName
+  #define SetupName "Volumix-Setup-" + AppVersion
 #endif
 #define AppExe "Volumix.exe"
 #define PublishDir "..\publish"
@@ -20,7 +23,7 @@ DefaultDirName={autopf}\{#AppName}
 DisableProgramGroupPage=yes
 DisableDirPage=auto
 OutputDir=..\dist
-OutputBaseFilename=Volumix-Setup-{#AppVersion}
+OutputBaseFilename={#SetupName}
 SetupIconFile=..\src\Volumix\Assets\app.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
