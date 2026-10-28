@@ -598,6 +598,52 @@ public class LyricsTests
     }
 
     [Fact]
+    public void DetectsAndStripsLeadingMetadataHeaders()
+    {
+        Assert.True(LyricsService.IsHeaderLine("☆Nirvana - Smells Like Teen Spirit☆", "Smells Like Teen Spirit", "Nirvana", TimeSpan.Zero));
+        Assert.True(LyricsService.IsHeaderLine("Borderline - Tame Impala", "Borderline", "Tame Impala", TimeSpan.Zero));
+        Assert.True(LyricsService.IsHeaderLine("New Person, Same Old Mistakes - Tame Impala", "New Person, Same Old Mistakes", "Tame Impala", TimeSpan.Zero));
+        Assert.True(LyricsService.IsHeaderLine("The Less I Know The Better (Explicit) - Tame Impala", "The Less I Know The Better", "Tame Impala", TimeSpan.Zero));
+        Assert.True(LyricsService.IsHeaderLine("Lyrics by: Kevin Parker", "Borderline", "Tame Impala", TimeSpan.FromSeconds(1.7)));
+        Assert.True(LyricsService.IsHeaderLine("作词 : Kurt Cobain", "Smells Like Teen Spirit", "Nirvana", TimeSpan.Zero));
+
+        Assert.False(LyricsService.IsHeaderLine("Load up on guns, bring your friends", "Smells Like Teen Spirit", "Nirvana", TimeSpan.FromSeconds(34)));
+        Assert.False(LyricsService.IsHeaderLine("Gone a little far", "Borderline", "Tame Impala", TimeSpan.FromSeconds(53)));
+        Assert.False(LyricsService.IsHeaderLine("Breathing in the dark", "Some Song", "Some Artist", TimeSpan.Zero));
+    }
+
+    [Fact]
+    public void ParseLrcStripsDecoratedAndPlainSongHeaders()
+    {
+        const string nirvanaLrc = """
+            [ti:Smells Like Teen Spirit]
+            [ar:Nirvana]
+            [00:00.00]☆Nirvana - Smells Like Teen Spirit☆
+            [00:01.00]Lyrics by: Kurt Cobain
+            [00:34.54]Load up on guns, bring your friends
+            [00:38.85]It's fun to lose and to pretend
+            """;
+        var lines = LyricsService.ParseLrc(nirvanaLrc, "Smells Like Teen Spirit", "Nirvana");
+        Assert.Equal(2, lines.Count);
+        Assert.Equal("Load up on guns, bring your friends", lines[0].Text);
+        Assert.Equal("It's fun to lose and to pretend", lines[1].Text);
+    }
+
+    [Fact]
+    public void ParseLrcStripsBorderlineHeader()
+    {
+        const string borderlineLrc = """
+            [00:00.00]Borderline - Tame Impala
+            [00:01.76]Lyrics by: Kevin Parker
+            [00:03.53]Composed by: Kevin Parker
+            [00:53.21]Gone a little far
+            """;
+        var lines = LyricsService.ParseLrc(borderlineLrc, "Borderline", "Tame Impala");
+        Assert.Single(lines);
+        Assert.Equal("Gone a little far", lines[0].Text);
+    }
+
+    [Fact]
     public void ParsesAmalgamaPage()
     {
         const string html = """

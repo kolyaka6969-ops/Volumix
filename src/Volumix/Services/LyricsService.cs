@@ -27,20 +27,22 @@ public sealed record Lyrics(LyricsStatus Status, IReadOnlyList<LyricLine> Lines)
     private static readonly Regex SentenceStart = new(@"(?<=\p{Ll}[,!?…]?)\s+(?=\p{Lu})");
 
     /// <summary>Синхронный текст из LRC; без меток времени — просто текст.</summary>
-    public static Lyrics FromLrc(string lrc)
+    public static Lyrics FromLrc(string lrc, string? title = null, string? artist = null)
     {
-        var lines = LyricsService.ParseLrc(lrc);
+        var lines = LyricsService.ParseLrc(lrc, title, artist);
         if (LyricsService.IsSynced(lines))
             return new(LyricsStatus.Synced, lines);
-        return FromPlain(lines.Count > 0 ? string.Join("\n", lines.Select(l => l.Text)) : lrc);
+        return FromPlain(lines.Count > 0 ? string.Join("\n", lines.Select(l => l.Text)) : lrc, title, artist);
     }
 
-    public static Lyrics FromPlain(string text)
+    public static Lyrics FromPlain(string text, string? title = null, string? artist = null)
     {
         var raw = text.Replace("\r", "").Split('\n').Select(l => l.Trim()).Where(l => !LyricsService.IsTag(l)).ToList();
         // Весь текст одной строкой: делим там, где после строчной буквы начинается слово с заглавной — обычно это начало строки
         if (raw.Count(l => l.Length > 0) == 1 && raw.First(l => l.Length > 0) is { Length: > 120 } single)
             raw = SentenceStart.Split(single).ToList();
+        while (raw.Count > 0 && (raw[0].Length == 0 || LyricsService.IsHeaderLine(raw[0], title, artist)))
+            raw.RemoveAt(0);
         var lines = raw.Select(l => new LyricLine(TimeSpan.Zero, l)).ToList();
         // Пустые строки по краям только сдвигают текст
         while (lines.Count > 0 && lines[0].Text.Length == 0) lines.RemoveAt(0);
@@ -402,7 +404,7 @@ public static class LyricsService
             lrc = ZeroWidth.Replace(UnicodeSpace.Replace(lrc, " "), "");
 
             // В начале идут авторы: «作词 : …», «作曲 : …», «Producer: …» — это не текст песни
-            var lines = ParseLrc(lrc).Where(line => !CreditLine.IsMatch(line.Text)).ToList();
+            var lines = ParseLrc(lrc, title, artist).Where(line => !CreditLine.IsMatch(line.Text)).ToList();
             while (lines.Count > 0 && lines[0].Text.Length == 0)
                 lines.RemoveAt(0);
             bool timed = seconds <= 0 || duration <= 0 || Math.Abs(duration - seconds) <= tolerance;
@@ -419,11 +421,93 @@ public static class LyricsService
     private static readonly Regex UnicodeSpace = new(@"\p{Zs}");
     private static readonly Regex ZeroWidth = new(@"[​-‍⁠﻿]");
 
-    private static readonly Regex CreditLine = new(
+    internal static readonly Regex CreditLine = new(
         @"^\s*(?:作词|作曲|编曲|制作人|制作|混音|母带|和声|吉他|贝斯|鼓|录音|监制|出品|发行|词|曲|" +
         @"слова|музыка|текст(?:\s+песни)?|автор(?:ы)?(?:\s+слов)?|композитор|исполнитель|аранжировка|сведение|мастеринг|" +
-        @"lyrics?(?:\s+by)?|lyricist|written\s+by|composer|composed\s+by|producers?|produced\s+by|arranger|mix(?:ing|ed)?(?:\s+by)?|master(?:ing|ed)?(?:\s+by)?)\s*[:：]",
+        @"lyrics?(?:\s+by)?|lyricist|written\s+by|composer|composed\s+by|producers?|produced\s+by|arranger|music(?:\s+by)?|" +
+        @"mix(?:ing|ed)?(?:\s+by)?|master(?:ing|ed)?(?:\s+by)?|vocals?(?:\s+by)?|" +
+        @"title|track|artist|singer|album|by|lrc(?:\s+by)?|sync(?:\s+by)?|edit(?:\s+by)?|qq(?:\s*群)?|id|hash|sign)\s*[:：$]",
         RegexOptions.IgnoreCase);
+
+    private static readonly char[] HeaderDecorators = { '☆', '★', '◆', '◇', '■', '▲', '▼', '♪', '♫', '【', '】', '『', '』', '[', ']', '(', ')', '~', '*', '_', '"', '\'', ' ', '-', '—', '–' };
+    private static readonly string[] TitleArtistSeparators = { " - ", " — ", " – ", " | ", " : ", " / " };
+
+    /// <summary>
+    /// Проверяет, является ли строка заголовком ролика/файла (например, «☆Nirvana - Smells Like Teen Spirit☆»
+    /// или «Borderline - Tame Impala»), строкой авторов («作词 : ...», «Lyrics by: ...») или тегом,
+    /// которые некоторые сервисы (Kugou, NetEase и др.) вставляют первой строкой с таймингом 00:00.
+    /// </summary>
+    internal static bool IsHeaderLine(string text, string? title = null, string? artist = null, TimeSpan? time = null)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return true;
+
+        var trimmed = text.Trim();
+        if (CreditLine.IsMatch(trimmed) || IsTag(trimmed))
+            return true;
+
+        var clean = trimmed.Trim(HeaderDecorators);
+        if (clean.Length == 0)
+            return true;
+
+        bool hasDecorators = trimmed.Length != clean.Length &&
+            (trimmed.StartsWith("☆") || trimmed.StartsWith("★") || trimmed.StartsWith("◆") || trimmed.StartsWith("【") ||
+             trimmed.StartsWith("『") || trimmed.EndsWith("☆") || trimmed.EndsWith("★") || trimmed.EndsWith("◆") ||
+             trimmed.EndsWith("】") || trimmed.EndsWith("』"));
+
+        // Метаданные (название и исполнитель) помещаются авторами файлов только во вступлении (первые 10 секунд)
+        if (time.HasValue && time.Value.TotalSeconds > 10)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(artist))
+        {
+            var normClean = CoverArtService.Norm(clean);
+            var normTitle = CoverArtService.Norm(title);
+            var normArtist = CoverArtService.Norm(artist);
+
+            if (normTitle.Length >= 2 && normClean == normTitle)
+                return true;
+            if (normArtist.Length >= 2 && normClean == normArtist)
+                return true;
+
+            foreach (var sep in TitleArtistSeparators)
+            {
+                int sepIndex = clean.IndexOf(sep, StringComparison.Ordinal);
+                if (sepIndex > 0 && sepIndex + sep.Length < clean.Length)
+                {
+                    var left = CoverArtService.Norm(clean[..sepIndex]);
+                    var right = CoverArtService.Norm(clean[(sepIndex + sep.Length)..]);
+
+                    bool leftTitle = normTitle.Length >= 2 && (left == normTitle || left.Contains(normTitle));
+                    bool rightArtist = normArtist.Length >= 2 && (right == normArtist || right.Contains(normArtist) || normArtist.Contains(right));
+                    bool leftArtist = normArtist.Length >= 2 && (left == normArtist || left.Contains(normArtist) || normArtist.Contains(left));
+                    bool rightTitle = normTitle.Length >= 2 && (right == normTitle || right.Contains(normTitle));
+
+                    if ((leftTitle && rightArtist) || (leftArtist && rightTitle))
+                        return true;
+
+                    if ((leftTitle || rightTitle || leftArtist || rightArtist) && (hasDecorators || !time.HasValue || time.Value == TimeSpan.Zero))
+                        return true;
+                }
+            }
+        }
+
+        if (hasDecorators && TitleArtistSeparators.Any(sep => clean.Contains(sep)))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Удаляет вводные заголовки (название, автор, теги) с начала списка строк.
+    /// </summary>
+    internal static List<LyricLine> CleanLeadingMetadata(IEnumerable<LyricLine> lines, string? title = null, string? artist = null)
+    {
+        var list = lines.ToList();
+        while (list.Count > 0 && IsHeaderLine(list[0].Text, title, artist, list[0].Time))
+            list.RemoveAt(0);
+        return list;
+    }
 
     /// <summary>
     /// Kugou Music — огромная база синхронных текстов (LRC) без ключей и регистрации.
@@ -491,7 +575,7 @@ public static class LyricsService
                     continue;
 
                 lrc = ZeroWidth.Replace(UnicodeSpace.Replace(lrc, " "), "");
-                var lines = ParseLrc(lrc).Where(line => !CreditLine.IsMatch(line.Text)).ToList();
+                var lines = ParseLrc(lrc, title, artist).Where(line => !CreditLine.IsMatch(line.Text)).ToList();
                 while (lines.Count > 0 && lines[0].Text.Length == 0)
                     lines.RemoveAt(0);
 
@@ -1292,14 +1376,14 @@ public static class LyricsService
 
     private static Lyrics? ToLyrics(LrcLibTrack track)
     {
-        var synced = string.IsNullOrWhiteSpace(track.SyncedLyrics) ? new List<LyricLine>() : ParseLrc(track.SyncedLyrics);
+        var synced = string.IsNullOrWhiteSpace(track.SyncedLyrics) ? new List<LyricLine>() : ParseLrc(track.SyncedLyrics, track.TrackName, track.ArtistName);
         // Битые метки врали бы — такой текст показываем без них
         if (IsSynced(synced) && !IsBrokenSync(synced))
             return new(LyricsStatus.Synced, synced);
         if (!string.IsNullOrWhiteSpace(track.PlainLyrics))
-            return Lyrics.FromPlain(track.PlainLyrics);
+            return Lyrics.FromPlain(track.PlainLyrics, track.TrackName, track.ArtistName);
         if (synced.Count > 0)
-            return Lyrics.FromPlain(string.Join("\n", synced.Select(l => l.Text)));
+            return Lyrics.FromPlain(string.Join("\n", synced.Select(l => l.Text)), track.TrackName, track.ArtistName);
         return track.Instrumental ? Lyrics.Instrumental : null;
     }
 
@@ -1318,7 +1402,7 @@ public static class LyricsService
     /// Разбирает LRC: «[01:23.45]строка», несколько меток на одной строке, [offset:±мс],
     /// пословные метки &lt;01:23.45&gt; (убираются). Пустые строки остаются — это паузы в песне.
     /// </summary>
-    public static List<LyricLine> ParseLrc(string lrc)
+    public static List<LyricLine> ParseLrc(string lrc, string? title = null, string? artist = null)
     {
         var result = new List<LyricLine>();
         var offset = TimeSpan.Zero;
@@ -1354,6 +1438,10 @@ public static class LyricsService
 
         // Устойчивая сортировка: у повторяющихся припевов метки часто идут не по порядку
         var sorted = result.Select((l, i) => (l, i)).OrderBy(x => x.l.Time).ThenBy(x => x.i).Select(x => x.l).ToList();
+
+        // Убираем заголовки, имена авторов, строки «Песня - Исполнитель» и кредиты из начала текста
+        sorted = CleanLeadingMetadata(sorted, title, artist);
+
         // Пустые строки в начале и подряд ничего не дают
         var clean = new List<LyricLine>(sorted.Count);
         foreach (var l in sorted)

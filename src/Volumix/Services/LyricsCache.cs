@@ -90,6 +90,8 @@ internal static class LyricsCache
                 continue;
             lines.Add(new LyricLine(TimeSpan.FromTicks(ticks), row[(tab + 1)..]));
         }
+        if (lines.Count > 0)
+            lines = LyricsService.CleanLeadingMetadata(lines);
         var lyrics = status switch
         {
             LyricsStatus.NotFound => Lyrics.NotFound,
