@@ -203,9 +203,10 @@ public partial class App : Application
     {
         try
         {
-            GC.Collect(2, GCCollectionMode.Aggressive, false, false);
+            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(2, GCCollectionMode.Aggressive, true, true);
             GC.WaitForPendingFinalizers();
-            GC.Collect(2, GCCollectionMode.Aggressive, false, false);
+            GC.Collect(2, GCCollectionMode.Aggressive, true, true);
             NativeMethods.SetProcessWorkingSetSize(NativeMethods.GetCurrentProcess(), (IntPtr)(-1), (IntPtr)(-1));
             NativeMethods.EmptyWorkingSet(NativeMethods.GetCurrentProcess());
         }

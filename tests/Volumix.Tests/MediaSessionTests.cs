@@ -227,6 +227,15 @@ public class MediaSessionTests
         Assert.Contains((song, (string?)singer), candidates);
     }
 
+    [Fact]
+    public void ScoreRejectsMismatchedArtistWhenPrimaryArtistExpected()
+    {
+        // "Райские цветы" by HELLCAT when wanted is "Пошлая Молли"
+        int score = CoverArtService.Score("Райские цветы", "Пошлая Молли", "Райские цветы", "HELLCAT");
+        Assert.Equal(3, score);
+        Assert.False(score >= 5);
+    }
+
     [Theory]
     [InlineData("Chainsaw Man - Opening | KICK BACK", "KICK BACK", null)]
     [InlineData("Demon Slayer - Opening Full 『Gurenge』 by LiSA (Lyrics)", "Gurenge", "LiSA")]

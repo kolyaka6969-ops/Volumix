@@ -102,7 +102,7 @@ public sealed class DesktopLyricsService : IDisposable
             _ = FetchAsync();
         };
         _media.Changed += Sync;
-        _media.TimelineChanged += Sync;
+        _media.TimelineChanged += OnTimelineChanged;
     }
 
     public bool Enabled
@@ -223,6 +223,24 @@ public sealed class DesktopLyricsService : IDisposable
         {
             _fetchTimer.Interval = track?.Duration > TimeSpan.Zero ? TimeSpan.FromMilliseconds(50) : FetchDelay;
             _fetchTimer.Start();
+        }
+    }
+
+    private void OnTimelineChanged()
+    {
+        var track = _enabled ? _media.NowPlaying : null;
+        if (track == null || _shownTrack == null || track.Key != _shownTrack.Key)
+        {
+            Sync();
+            return;
+        }
+        bool playChanged = track.IsPlaying != _shownTrack.IsPlaying;
+        var expectedPos = _shownTrack.PositionAt(DateTimeOffset.Now);
+        var actualPos = track.PositionAt(DateTimeOffset.Now);
+        bool seekJump = Math.Abs((actualPos - expectedPos).TotalSeconds) > 2;
+        if (playChanged || seekJump)
+        {
+            Sync();
         }
     }
 
@@ -557,7 +575,7 @@ public sealed class DesktopLyricsService : IDisposable
     public void Dispose()
     {
         _media.Changed -= Sync;
-        _media.TimelineChanged -= Sync;
+        _media.TimelineChanged -= OnTimelineChanged;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _fetchTimer.Stop();
         _fetch?.Cancel();

@@ -639,11 +639,12 @@ public sealed class MediaIslandService : IDisposable
     {
         try
         {
+            using var ms = new MemoryStream(data);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.DecodePixelWidth = 128;
-            image.StreamSource = new MemoryStream(data);
+            image.StreamSource = ms;
             image.EndInit();
             image.Freeze();
             return image;

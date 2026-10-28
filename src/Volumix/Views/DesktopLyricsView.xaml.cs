@@ -521,6 +521,7 @@ public partial class DesktopLyricsView : UserControl
         // Для фона хватает крошечной копии: растянутая, она уже почти размыта, и яркие детали обложки
         // не превращаются в пятна под текстом. Новый фон проявляется поверх старого.
         var backdrop = Decode(data, 16);
+        BackdropNext.BeginAnimation(OpacityProperty, null);
         BackdropNext.Source = backdrop;
         var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(900));
         fade.Completed += (_, _) =>
@@ -541,11 +542,12 @@ public partial class DesktopLyricsView : UserControl
             return null;
         try
         {
+            using var ms = new MemoryStream(data);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.DecodePixelWidth = width;
-            image.StreamSource = new MemoryStream(data);
+            image.StreamSource = ms;
             image.EndInit();
             image.Freeze();
             return image;

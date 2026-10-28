@@ -128,11 +128,15 @@ internal static class YouTubeService
                 return null;
 
             var normalized = Normalize(title);
-            var matched = results.FirstOrDefault(r => Normalize(r.Title) == normalized);
+            var matched = results.FirstOrDefault(r =>
+            {
+                var rNorm = Normalize(r.Title);
+                return rNorm == normalized || (normalized.Length >= 4 && (rNorm.Contains(normalized) || normalized.Contains(rNorm)));
+            });
             if (matched.Id != null)
                 return matched.Id;
 
-            return results.FirstOrDefault().Id;
+            return null;
         });
 
     /// <summary>Ролики из выдачи поиска: id и название.</summary>

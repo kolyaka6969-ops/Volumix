@@ -3,7 +3,7 @@
 param([ValidateSet('All', 'Win11', 'Win10')] [string]$Only = 'All')
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$version = '1.6.7'
+$version = '1.6.8'
 
 # WPF в Release молча теряет ресурсы, если пути в obj длиннее 260 символов
 if ($root.Length -gt 140) {

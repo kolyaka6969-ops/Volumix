@@ -241,6 +241,9 @@ public sealed class MediaSessionService : IDisposable
         return BrowserIds.Any(b => id.Contains(b, StringComparison.OrdinalIgnoreCase));
     }
 
+    internal static bool SameSession(GlobalSystemMediaTransportControlsSession? a, GlobalSystemMediaTransportControlsSession? b) =>
+        a != null && b != null && (ReferenceEquals(a, b) || string.Equals(a.SourceAppUserModelId, b.SourceAppUserModelId, StringComparison.OrdinalIgnoreCase));
+
     private void AttachSession()
     {
         if (_disposed || _manager == null)
@@ -249,7 +252,7 @@ public sealed class MediaSessionService : IDisposable
         var (found, kind) = Pick();
 
         // Переподписываемся только на новый сеанс: после перезапуска плеера сеанс новый, хоть и с тем же именем.
-        if (ReferenceEquals(found, _session))
+        if (SameSession(found, _session))
         {
             if (_source == kind)
                 return;
@@ -315,13 +318,13 @@ public sealed class MediaSessionService : IDisposable
             var playingNow = candidates.Where(c => c.Playing).ToList();
             // Ничего не играет — остаёмся на том, что играло последним: поставили YouTube на паузу,
             // и «играть» должно продолжить YouTube, а не Spotify
-            if (playingNow.Count == 0 && candidates.FirstOrDefault(c => ReferenceEquals(c.Session, _session)) is { Session: not null } last)
+            if (playingNow.Count == 0 && candidates.FirstOrDefault(c => SameSession(c.Session, _session)) is { Session: not null } last)
                 return (last.Session, last.Kind);
             // Приостановленную вкладку браузера берём, только если она уже играла у нас: Chrome держит сеанс
             // от любого видео и после закрытия ролика, и старый заголовок иначе подменил бы песню.
             var pool = playingNow.Count > 0
                 ? playingNow
-                : candidates.Where(c => !c.Browser || ReferenceEquals(c.Session, _session)).ToList();
+                : candidates.Where(c => !c.Browser || SameSession(c.Session, _session)).ToList();
             if (pool.Count == 0)
                 pool = candidates;
 
@@ -346,14 +349,14 @@ public sealed class MediaSessionService : IDisposable
     {
         for (int i = _watched.Count - 1; i >= 0; i--)
         {
-            if (sessions.Any(s => ReferenceEquals(s, _watched[i])))
+            if (sessions.Any(s => SameSession(s, _watched[i])))
                 continue;
             try { _watched[i].PlaybackInfoChanged -= OnAnyPlaybackChanged; } catch (Exception) { }
             _watched.RemoveAt(i);
         }
         foreach (var session in sessions)
         {
-            if (_watched.Any(s => ReferenceEquals(s, session)))
+            if (_watched.Any(s => SameSession(s, session)))
                 continue;
             try
             {
@@ -403,7 +406,7 @@ public sealed class MediaSessionService : IDisposable
     private void OnTimelineChanged(GlobalSystemMediaTransportControlsSession sender, object args) =>
         _dispatcher.BeginInvoke(() =>
         {
-            if (_disposed || sender != _session)
+            if (_disposed || !SameSession(sender, _session))
                 return;
             ReadTimeline(sender);
             TimelineChanged?.Invoke();

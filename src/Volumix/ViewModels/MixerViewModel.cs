@@ -25,6 +25,7 @@ public sealed class MixerViewModel : ObservableObject, IMMNotificationClient, ID
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _timer;
     private readonly HashSet<uint> _knownPids = new();
+    private DispatcherTimer? _refreshTimer;
     private MMDevice? _device;
     private DeviceItem? _selectedDevice;
     private bool _devicesDirty = true;
@@ -113,7 +114,9 @@ public sealed class MixerViewModel : ObservableObject, IMMNotificationClient, ID
 
         if (_device == null)
         {
-            Apps.Clear();
+            foreach (var app in Apps)
+            app.Dispose();
+        Apps.Clear();
             return;
         }
 
@@ -168,7 +171,10 @@ public sealed class MixerViewModel : ObservableObject, IMMNotificationClient, ID
 
         for (int i = Apps.Count - 1; i >= 0; i--)
             if (!groups.ContainsKey(Apps[i].Key))
+            {
+                Apps[i].Dispose();
                 Apps.RemoveAt(i);
+            }
 
         foreach (var key in order)
         {
@@ -208,6 +214,8 @@ public sealed class MixerViewModel : ObservableObject, IMMNotificationClient, ID
             _device.Dispose();
         }
 
+        foreach (var app in Apps)
+            app.Dispose();
         Apps.Clear();
         _device = current;
         if (_device != null)
@@ -280,16 +288,22 @@ public sealed class MixerViewModel : ObservableObject, IMMNotificationClient, ID
             if (_refreshQueued)
                 return;
             _refreshQueued = true;
-            // Небольшая задержка: Windows шлёт пачки уведомлений подряд
-            var t = new DispatcherTimer(DispatcherPriority.Background, _dispatcher) { Interval = TimeSpan.FromMilliseconds(150) };
-            t.Tick += (_, _) =>
+            _refreshTimer ??= new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
             {
-                t.Stop();
-                _refreshQueued = false;
-                Refresh();
+                Interval = TimeSpan.FromMilliseconds(150)
             };
-            t.Start();
+            _refreshTimer.Tick -= OnRefreshTimerTick;
+            _refreshTimer.Tick += OnRefreshTimerTick;
+            _refreshTimer.Stop();
+            _refreshTimer.Start();
         });
+    }
+
+    private void OnRefreshTimerTick(object? sender, EventArgs e)
+    {
+        _refreshTimer?.Stop();
+        _refreshQueued = false;
+        Refresh();
     }
 
     // IMMNotificationClient — вызывается из потоков Windows, поэтому только ставим обновление в очередь.
@@ -306,8 +320,12 @@ public sealed class MixerViewModel : ObservableObject, IMMNotificationClient, ID
     public void Dispose()
     {
         _timer.Stop();
+        _refreshTimer?.Stop();
         try { _enumerator.UnregisterEndpointNotificationCallback(this); } catch (COMException) { }
         _device?.Dispose();
         _enumerator.Dispose();
+        foreach (var app in Apps)
+            app.Dispose();
+        Apps.Clear();
     }
 }

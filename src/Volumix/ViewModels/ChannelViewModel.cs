@@ -119,7 +119,7 @@ public sealed class MasterChannelViewModel : ChannelViewModel
     }
 }
 
-public sealed class AppSessionViewModel : ChannelViewModel
+public sealed class AppSessionViewModel : ChannelViewModel, IDisposable
 {
     private List<AudioSessionControl> _sessions = new();
 
@@ -143,12 +143,28 @@ public sealed class AppSessionViewModel : ChannelViewModel
 
     internal void Update(List<AudioSessionControl> sessions)
     {
+        foreach (var old in _sessions)
+        {
+            if (!sessions.Contains(old))
+            {
+                try { old.Dispose(); } catch { }
+            }
+        }
         _sessions = sessions;
         var first = sessions[0].SimpleAudioVolume;
         bool allMuted = true;
         foreach (var s in sessions)
             allMuted &= s.SimpleAudioVolume.Mute;
         Sync(first.Volume, allMuted);
+    }
+
+    public void Dispose()
+    {
+        foreach (var s in _sessions)
+        {
+            try { s.Dispose(); } catch { }
+        }
+        _sessions.Clear();
     }
 
     internal double ReadPeak()

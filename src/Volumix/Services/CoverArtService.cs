@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -43,11 +44,12 @@ internal static class CoverArtService
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(Budget);
         bool failed = false;
+        var primaryArtist = candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Artist)).Artist;
         foreach (var (title, artist) in candidates)
         {
             if (cts.IsCancellationRequested)
                 return (null, true);
-            var (art, oneFailed) = await FindOneAsync(title, artist, cts.Token);
+            var (art, oneFailed) = await FindOneAsync(title, artist, primaryArtist, cts.Token);
             if (art != null)
                 return (art, false);
             failed |= oneFailed;
@@ -55,9 +57,10 @@ internal static class CoverArtService
         return (null, failed || cts.IsCancellationRequested);
     }
 
-    private static async Task<(byte[]? Art, bool Failed)> FindOneAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, bool Failed)> FindOneAsync(string title, string? artist, string? primaryArtist, CancellationToken ct)
     {
-        var key = $"{Norm(artist)}\n{Norm(title)}";
+        var effectiveArtist = !string.IsNullOrWhiteSpace(artist) ? artist : primaryArtist;
+        var key = $"{Norm(effectiveArtist)}\n{Norm(title)}";
         lock (Cache)
         {
             if (Cache.TryGetValue(key, out var cached))
@@ -68,8 +71,8 @@ internal static class CoverArtService
         bool failed = false;
 
         // Deezer и iTunes опрашиваем параллельно: отвечают за 150–300 мс
-        var deezerTask = SafeLoadAsync(() => FromDeezerAsync(title, artist, ct));
-        var itunesTask = SafeLoadAsync(() => FromITunesAsync(title, artist, ct));
+        var deezerTask = SafeLoadAsync(() => FromDeezerAsync(title, artist, effectiveArtist, ct));
+        var itunesTask = SafeLoadAsync(() => FromITunesAsync(title, artist, effectiveArtist, ct));
 
         await Task.WhenAll(deezerTask, itunesTask);
         var (deezerArt, deezerScore, deezerFailed) = await deezerTask;
@@ -90,7 +93,7 @@ internal static class CoverArtService
             {
                 using var geniusCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
                 using var linkedGenius = CancellationTokenSource.CreateLinkedTokenSource(ct, geniusCts.Token);
-                var (geniusArt, _) = await FromGeniusAsync(title, artist, linkedGenius.Token);
+                var (geniusArt, _) = await FromGeniusAsync(title, artist, effectiveArtist, linkedGenius.Token);
                 art = geniusArt;
             }
             catch (Exception)
@@ -134,9 +137,10 @@ internal static class CoverArtService
         return http;
     }
 
-    private static async Task<(byte[]? Art, int Score)> FromDeezerAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, int Score)> FromDeezerAsync(string title, string? artist, string? effectiveArtist, CancellationToken ct)
     {
-        var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
+        var searchArtist = !string.IsNullOrWhiteSpace(artist) ? artist : effectiveArtist;
+        var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(searchArtist) ? title : $"{searchArtist} {title}");
         var json = await Http.GetStringAsync($"https://api.deezer.com/search?q={query}&limit=6", ct);
         using var doc = JsonDocument.Parse(json);
         // Превышение лимита Deezer отдаёт с кодом 200 и полем error
@@ -145,14 +149,14 @@ internal static class CoverArtService
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             return (null, 0);
 
-        int minScore = string.IsNullOrWhiteSpace(artist) ? 3 : 5;
+        int minScore = string.IsNullOrWhiteSpace(effectiveArtist) ? 3 : 5;
         var best = 0;
         string? bestUrl = null;
         foreach (var item in data.EnumerateArray())
         {
             var candidateTitle = Str(item, "title");
             var candidateArtist = item.TryGetProperty("artist", out var a) ? Str(a, "name") : null;
-            var score = Score(title, artist, candidateTitle, candidateArtist);
+            var score = Score(title, effectiveArtist, candidateTitle, candidateArtist);
             if (score <= best || score < minScore || !item.TryGetProperty("album", out var album))
                 continue;
             best = score;
@@ -162,21 +166,22 @@ internal static class CoverArtService
         return (art, art != null ? best : 0);
     }
 
-    private static async Task<(byte[]? Art, int Score)> FromITunesAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, int Score)> FromITunesAsync(string title, string? artist, string? effectiveArtist, CancellationToken ct)
     {
-        var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
+        var searchArtist = !string.IsNullOrWhiteSpace(artist) ? artist : effectiveArtist;
+        var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(searchArtist) ? title : $"{searchArtist} {title}");
         var json = await Http.GetStringAsync(
             $"https://itunes.apple.com/search?term={query}&media=music&entity=song&limit=8", ct);
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
             return (null, 0);
 
-        int minScore = string.IsNullOrWhiteSpace(artist) ? 3 : 5;
+        int minScore = string.IsNullOrWhiteSpace(effectiveArtist) ? 3 : 5;
         var best = 0;
         string? bestUrl = null;
         foreach (var item in results.EnumerateArray())
         {
-            var score = Score(title, artist, Str(item, "trackName"), Str(item, "artistName"));
+            var score = Score(title, effectiveArtist, Str(item, "trackName"), Str(item, "artistName"));
             var art = Str(item, "artworkUrl100");
             if (score <= best || score < minScore || art == null)
                 continue;
@@ -192,9 +197,10 @@ internal static class CoverArtService
     /// Genius: обложки есть почти у всех песен, у которых там есть текст, — в том числе у тех, что не продаются
     /// в Deezer и Apple Music. Как и с текстом, берём только песню с тем же названием и исполнителем.
     /// </summary>
-    private static async Task<(byte[]? Art, int Score)> FromGeniusAsync(string title, string? artist, CancellationToken ct)
+    private static async Task<(byte[]? Art, int Score)> FromGeniusAsync(string title, string? artist, string? effectiveArtist, CancellationToken ct)
     {
-        var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{artist} {title}");
+        var searchArtist = !string.IsNullOrWhiteSpace(artist) ? artist : effectiveArtist;
+        var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(searchArtist) ? title : $"{searchArtist} {title}");
         var json = await Http.GetStringAsync($"https://genius.com/api/search/song?q={query}&per_page=5", ct);
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("response", out var response) ||
@@ -202,7 +208,7 @@ internal static class CoverArtService
             !sections[0].TryGetProperty("hits", out var hits))
             return (null, 0);
 
-        int minScore = string.IsNullOrWhiteSpace(artist) ? 3 : 5;
+        int minScore = string.IsNullOrWhiteSpace(effectiveArtist) ? 3 : 5;
         var best = 0;
         string? bestUrl = null;
         foreach (var hit in hits.EnumerateArray())
@@ -211,7 +217,7 @@ internal static class CoverArtService
                 continue;
             var foundArtist = Str(result, "artist_names") ??
                               (result.TryGetProperty("primary_artist", out var pa) ? Str(pa, "name") : null);
-            var score = Score(title, artist, Str(result, "title"), foundArtist);
+            var score = Score(title, effectiveArtist, Str(result, "title"), foundArtist);
             var art = Str(result, "song_art_image_url");
             // У песен без своей обложки Genius подставляет общую заглушку
             if (score <= best || score < minScore || art == null || art.Contains("default_cover", StringComparison.OrdinalIgnoreCase))
