@@ -2,7 +2,7 @@
 
 #define AppName "Volumix"
 #ifndef AppVersion
-  #define AppVersion "1.6.5"
+  #define AppVersion "1.6.6"
 #endif
 #ifndef SetupName
   #define SetupName "Volumix-Setup-" + AppVersion
