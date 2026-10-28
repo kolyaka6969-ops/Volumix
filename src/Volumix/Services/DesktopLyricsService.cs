@@ -23,7 +23,7 @@ public sealed class DesktopLyricsService : IDisposable
     /// Сам трек на обоях появляется сразу, задерживается только поиск текста.
     /// </summary>
     private static readonly TimeSpan FetchDelay = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(5);
     /// <summary>
     /// Сколько держать заглушку, пока новый ролик YouTube проверяется. Проверка — поиск текста — занимает секунду-две,
     /// а Chrome при смене ролика ещё и на пару секунд выдаёт его за трек другого сайта.
@@ -221,7 +221,7 @@ public sealed class DesktopLyricsService : IDisposable
         _fetchTimer.Stop();
         if (key != null)
         {
-            _fetchTimer.Interval = track?.Duration > TimeSpan.Zero ? TimeSpan.FromMilliseconds(200) : FetchDelay;
+            _fetchTimer.Interval = track?.Duration > TimeSpan.Zero ? TimeSpan.FromMilliseconds(50) : FetchDelay;
             _fetchTimer.Start();
         }
     }
@@ -258,7 +258,10 @@ public sealed class DesktopLyricsService : IDisposable
             // Если текст по названию не нашёлся — возможно, песня указана в описании ролика на YouTube («Музыка»)
             if (!IsMusic(result) && _media.Video is var (videoTitle, channel, thumbnail))
             {
-                song = await YouTubeService.FindSongAsync(videoTitle, channel, thumbnail);
+                using var ytCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                using var linkedYt = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, ytCts.Token);
+                try { song = await YouTubeService.FindSongAsync(videoTitle, channel, thumbnail); }
+                catch { }
                 if (cts.IsCancellationRequested)
                     return;
                 if (song != null)

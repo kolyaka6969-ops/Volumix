@@ -15,7 +15,7 @@
     <AssemblyName>Volumix</AssemblyName>
     <RootNamespace>Volumix</RootNamespace>
     <Product>Volumix</Product>
-    <Version>1.6.4</Version>
+    <Version>1.6.5</Version>
     <Description>Микшер громкости приложений для Windows 10 и 11</Description>
     <Copyright>© 2026</Copyright>
   </PropertyGroup>

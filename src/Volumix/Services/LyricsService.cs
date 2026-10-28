@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -66,6 +67,7 @@ public static class LyricsService
     private static readonly HttpClient Fallback = CreateFallback();
     // NetEase ставит cookie на первом ответе и с ними отдаёт пустой поиск — ему отдельный клиент без cookie
     private static readonly HttpClient NetEase = CreateFallback(useCookies: false);
+    private static readonly HttpClient Kugou = CreateFallback(useCookies: false);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly Dictionary<string, Lyrics> Cache = new();
     private static readonly Dictionary<string, (Lyrics Lyrics, int Index)> VideoCache = new();
@@ -84,7 +86,7 @@ public static class LyricsService
         var http = new HttpClient(CreateHandler(useCookies: true))
         {
             BaseAddress = new Uri("https://lrclib.net/api/"),
-            Timeout = TimeSpan.FromSeconds(8),
+            Timeout = TimeSpan.FromSeconds(4),
             // Все запросы песни идут по одному соединению HTTP/2, без лишних рукопожатий TLS
             DefaultRequestVersion = HttpVersion.Version20,
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
@@ -103,13 +105,13 @@ public static class LyricsService
     {
         UseCookies = useCookies,
         AutomaticDecompression = DecompressionMethods.All,
-        ConnectTimeout = TimeSpan.FromSeconds(5),
+        ConnectTimeout = TimeSpan.FromSeconds(3),
         PooledConnectionLifetime = TimeSpan.FromMinutes(5),
     };
 
     private static HttpClient CreateFallback(bool useCookies = true)
     {
-        var http = new HttpClient(CreateHandler(useCookies)) { Timeout = TimeSpan.FromSeconds(8) };
+        var http = new HttpClient(CreateHandler(useCookies)) { Timeout = TimeSpan.FromSeconds(4) };
         var version = typeof(LyricsService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"Volumix/{version}");
         return http;
@@ -157,8 +159,10 @@ public static class LyricsService
     {
         try
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3.5));
             var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{FirstArtist(artist)} {title}");
-            var json = await Fallback.GetStringAsync($"https://genius.com/api/search/song?q={query}&per_page=5", ct);
+            var json = await Fallback.GetStringAsync($"https://genius.com/api/search/song?q={query}&per_page=5", cts.Token);
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("response", out var response) ||
                 !response.TryGetProperty("sections", out var sections) || sections.GetArrayLength() == 0 ||
@@ -185,7 +189,7 @@ public static class LyricsService
             if (Str(s, "url") is not { } url || !url.StartsWith("https://genius.com/", StringComparison.Ordinal))
                 return Lyrics.NotFound;
 
-            var text = ParseGeniusPage(await Fallback.GetStringAsync(url, ct));
+            var text = ParseGeniusPage(await Fallback.GetStringAsync(url, cts.Token));
             return text == null ? Lyrics.NotFound : Lyrics.FromPlain(text);
         }
         catch (Exception)
@@ -250,8 +254,10 @@ public static class LyricsService
             return Lyrics.NotFound; // у сайта в выдаче «Исполнитель - Название», без исполнителя не сверить
         try
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3.5));
             var query = Uri.EscapeDataString($"{FirstArtist(artist)} {title}");
-            var page = await Fallback.GetStringAsync($"https://text-lyrics.ru/index.php?do=search&subaction=search&story={query}", ct);
+            var page = await Fallback.GetStringAsync($"https://text-lyrics.ru/index.php?do=search&subaction=search&story={query}", cts.Token);
 
             int best = 0;
             string? url = null;
@@ -259,6 +265,8 @@ public static class LyricsService
             {
                 var name = System.Net.WebUtility.HtmlDecode(HtmlTag.Replace(m.Groups["name"].Value, "")).Trim();
                 int dash = name.IndexOf(" - ", StringComparison.Ordinal);
+                if (dash < 0) dash = name.IndexOf(" – ", StringComparison.Ordinal);
+                if (dash < 0) dash = name.IndexOf(" — ", StringComparison.Ordinal);
                 if (dash <= 0)
                     continue;
                 int score = CoverArtService.Score(title, artist, name[(dash + 3)..], name[..dash]);
@@ -269,7 +277,7 @@ public static class LyricsService
             if (url == null || best < 4)
                 return Lyrics.NotFound;
 
-            var text = ParseTextLyricsPage(await Fallback.GetStringAsync(url, ct));
+            var text = ParseTextLyricsPage(await Fallback.GetStringAsync(url, cts.Token));
             return text == null ? Lyrics.NotFound : Lyrics.FromPlain(text);
         }
         catch (Exception)
@@ -347,8 +355,10 @@ public static class LyricsService
     {
         try
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3.5));
             var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{FirstArtist(artist)} {title}");
-            var json = await NetEase.GetStringAsync($"https://music.163.com/api/search/get?s={query}&type=1&limit=8", ct);
+            var json = await NetEase.GetStringAsync($"https://music.163.com/api/search/get?s={query}&type=1&limit=8", cts.Token);
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("result", out var result) ||
                 !result.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
@@ -411,20 +421,412 @@ public static class LyricsService
 
     private static readonly Regex CreditLine = new(
         @"^\s*(?:作词|作曲|编曲|制作人|制作|混音|母带|和声|吉他|贝斯|鼓|录音|监制|出品|发行|词|曲|" +
+        @"слова|музыка|текст(?:\s+песни)?|автор(?:ы)?(?:\s+слов)?|композитор|исполнитель|аранжировка|сведение|мастеринг|" +
         @"lyrics?(?:\s+by)?|lyricist|written\s+by|composer|composed\s+by|producers?|produced\s+by|arranger|mix(?:ing|ed)?(?:\s+by)?|master(?:ing|ed)?(?:\s+by)?)\s*[:：]",
         RegexOptions.IgnoreCase);
 
     /// <summary>
+    /// Kugou Music — огромная база синхронных текстов (LRC) без ключей и регистрации.
+    /// Отлично находит как зарубежные треки (Linkin Park, Queen), так и русские («Король и Шут», «Кино», Баста).
+    /// </summary>
+    internal static async Task<Lyrics> FetchKugouAsync(string title, string? artist, double seconds, double tolerance, CancellationToken ct)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3.5));
+            var query = Uri.EscapeDataString(string.IsNullOrWhiteSpace(artist) ? title : $"{FirstArtist(artist)} {title}");
+            var searchUrl = $"http://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword={query}&page=1&pagesize=6";
+            var json = await Kugou.GetStringAsync(searchUrl, cts.Token);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data) ||
+                !data.TryGetProperty("info", out var info) || info.ValueKind != JsonValueKind.Array)
+                return Lyrics.NotFound;
+
+            int threshold = string.IsNullOrWhiteSpace(artist) ? 3 : 4;
+            var matches = info.EnumerateArray().Select(song =>
+                {
+                    var songTitle = Str(song, "songname");
+                    var songArtist = Str(song, "singername");
+                    var hash = Str(song, "hash");
+                    double duration = song.TryGetProperty("duration", out var d) && d.TryGetDouble(out var s) ? s : 0;
+                    int score = CoverArtService.Score(title, artist, songTitle, songArtist);
+                    return (Hash: hash, Duration: duration, Score: score);
+                })
+                .Where(m => !string.IsNullOrEmpty(m.Hash) && m.Score >= threshold)
+                .OrderByDescending(m => m.Score)
+                .ThenBy(m => seconds > 0 && m.Duration > 0 ? Math.Abs(m.Duration - seconds) : 0)
+                .Take(2)
+                .ToList();
+
+            if (matches.Count == 0)
+                return Lyrics.NotFound;
+
+            Lyrics? plainFallback = null;
+            foreach (var match in matches)
+            {
+                var candUrl = $"http://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword={query}&hash={match.Hash}";
+                var candJson = await Kugou.GetStringAsync(candUrl, cts.Token);
+                using var candDoc = JsonDocument.Parse(candJson);
+                if (!candDoc.RootElement.TryGetProperty("candidates", out var candidates) ||
+                    candidates.ValueKind != JsonValueKind.Array || candidates.GetArrayLength() == 0)
+                    continue;
+
+                var cand = candidates[0];
+                var id = Str(cand, "id");
+                var accessKey = Str(cand, "accesskey");
+                if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(accessKey))
+                    continue;
+
+                var dlUrl = $"http://lyrics.kugou.com/download?ver=1&client=pc&id={id}&accesskey={accessKey}&fmt=lrc&charset=utf8";
+                var dlJson = await Kugou.GetStringAsync(dlUrl, cts.Token);
+                using var dlDoc = JsonDocument.Parse(dlJson);
+                var content = Str(dlDoc.RootElement, "content");
+                if (string.IsNullOrWhiteSpace(content))
+                    continue;
+
+                var lrcBytes = Convert.FromBase64String(content);
+                var lrc = Encoding.UTF8.GetString(lrcBytes).Trim('\uFEFF');
+                if (string.IsNullOrWhiteSpace(lrc))
+                    continue;
+
+                lrc = ZeroWidth.Replace(UnicodeSpace.Replace(lrc, " "), "");
+                var lines = ParseLrc(lrc).Where(line => !CreditLine.IsMatch(line.Text)).ToList();
+                while (lines.Count > 0 && lines[0].Text.Length == 0)
+                    lines.RemoveAt(0);
+
+                bool timed = seconds <= 0 || match.Duration <= 0 || Math.Abs(match.Duration - seconds) <= tolerance;
+                if (timed && IsSynced(lines) && !IsBrokenSync(lines))
+                    return new(LyricsStatus.Synced, lines);
+
+                if (lines.Count > 0 && plainFallback == null)
+                    plainFallback = Lyrics.FromPlain(string.Join("\n", lines.Select(x => x.Text)));
+            }
+
+            return plainFallback ?? Lyrics.NotFound;
+        }
+        catch (Exception)
+        {
+            return Lyrics.Error;
+        }
+    }
+
+    /// <summary>
+    /// amalgama-lab.com — крупнейшая в СНГ база оригинальных текстов зарубежных песен с переводами.
+    /// Быстрый прямой доступ по URL-slug, не блокируется в РФ.
+    /// </summary>
+    internal static async Task<Lyrics> FetchAmalgamaAsync(string title, string? artist, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(artist))
+            return Lyrics.NotFound;
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3.5));
+
+            var artistSlug = Slug(FirstArtist(artist));
+            var titleSlug = Slug(title);
+            if (string.IsNullOrEmpty(artistSlug) || string.IsNullOrEmpty(titleSlug))
+                return Lyrics.NotFound;
+
+            char letter = artistSlug[0];
+            var url = $"https://www.amalgama-lab.com/songs/{letter}/{artistSlug}/{titleSlug}.html";
+            using var response = await Fallback.GetAsync(url, cts.Token);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return Lyrics.NotFound;
+            if (!response.IsSuccessStatusCode)
+                return Lyrics.Error;
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token);
+            string html = GetEncoding1251().GetString(bytes);
+
+            var text = ParseAmalgamaPage(html);
+            return text == null ? Lyrics.NotFound : Lyrics.FromPlain(text);
+        }
+        catch (Exception)
+        {
+            return Lyrics.Error;
+        }
+    }
+
+    private static Encoding? _encoding1251;
+    private static Encoding GetEncoding1251()
+    {
+        if (_encoding1251 != null)
+            return _encoding1251;
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            _encoding1251 = Encoding.GetEncoding("windows-1251");
+        }
+        catch
+        {
+            _encoding1251 = Encoding.UTF8;
+        }
+        return _encoding1251;
+    }
+
+    internal static string Slug(string text)
+    {
+        var s = text.Trim().ToLowerInvariant();
+        s = LeadingArticle.Replace(s, "");
+        s = TitleSuffix.Replace(s, "");
+        s = Regex.Replace(s, @"[^a-z0-9]+", "_").Trim('_');
+        return s;
+    }
+
+    private static readonly Regex AmalgamaNextTranslation = new(
+        @"<div class=""string_container"">\s*<div class=""original"">\s*<strong>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    private static readonly Regex AmalgamaOriginalDiv = new(
+        @"<div class=""original"">(.*?)</div>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+    internal static string? ParseAmalgamaPage(string html)
+    {
+        int at = html.IndexOf("id=\"click_area\"", StringComparison.Ordinal);
+        if (at < 0)
+            at = html.IndexOf("class=\"texts col\"", StringComparison.Ordinal);
+        if (at < 0)
+            return null;
+
+        var sub = html[at..];
+        var strongMatch = AmalgamaNextTranslation.Match(sub);
+        if (strongMatch.Success)
+            sub = sub[..strongMatch.Index];
+
+        var lines = new List<string>();
+        foreach (Match m in AmalgamaOriginalDiv.Matches(sub))
+        {
+            lines.Add(m.Groups[1].Value);
+        }
+
+        return lines.Count == 0 ? null : HtmlToLyrics(string.Join("<br>", lines));
+    }
+
+    /// <summary>
+    /// Первая очередь: параллельный поиск синхронных текстов (с метками времени / LRC)
+    /// одновременно по всем сервисам (lrclib.net, NetEase, Kugou).
+    /// Первый найденный качественный синхронный текст (не транслит) немедленно отменяет остальные запросы.
+    /// </summary>
+    internal static async Task<(Lyrics? Synced, Lyrics? Plain)> FetchTimedAsync(
+        string title, string? artist, string? album, TimeSpan duration, CancellationToken ct)
+    {
+        double seconds = Math.Round(duration.TotalSeconds);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var lrclibTask = FetchAsync(title, artist, album, duration, linked.Token);
+        var neteaseTask = FetchNetEaseAsync(title, artist, seconds, DurationTolerance, linked.Token);
+        var kugouTask = FetchKugouAsync(title, artist, seconds, DurationTolerance, linked.Token);
+
+        var pending = new List<Task<Lyrics>> { lrclibTask, neteaseTask, kugouTask };
+        Lyrics? bestSynced = null;
+        int bestSyncedRank = int.MaxValue;
+        Lyrics? bestPlain = null;
+
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending);
+            pending.Remove(completed);
+
+            Lyrics result;
+            try { result = await completed; }
+            catch { continue; }
+
+            if (result.Status == LyricsStatus.Synced)
+            {
+                int rank = Rank(result);
+                if (rank < TranslitPenalty)
+                {
+                    // Идеальный синхронный текст на родном языке — сразу отменяем всё остальное
+                    linked.Cancel();
+                    return (result, null);
+                }
+
+                if (rank < bestSyncedRank)
+                {
+                    bestSynced = result;
+                    bestSyncedRank = rank;
+                }
+            }
+            else if (result.Status is LyricsStatus.Plain or LyricsStatus.Instrumental)
+            {
+                bestPlain ??= result;
+            }
+        }
+
+        return (bestSynced, bestPlain);
+    }
+
+    /// <summary>
+    /// Вторая очередь: поиск обычного текста песни (без меток времени), если синхронный текст не найден.
+    /// Ищет параллельно по сайтам с текстами:
+    /// Для русских песен: text-lyrics.ru (быстро и на кириллице) и Genius.
+    /// Для остальных: amalgama-lab.com, Genius, lyrics.ovh, плюс запасные тексты из первой очереди.
+    /// </summary>
+    internal static async Task<Lyrics> FetchPlainTierAsync(
+        string title, string? artist, Lyrics? fallbackPlain, CancellationToken ct)
+    {
+        bool isRussian = HasCyrillic(title) || (artist != null && HasCyrillic(artist));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var tasks = new List<Task<Lyrics>>();
+        Task<Lyrics>? textLyricsTask = null;
+        Task<Lyrics>? amalgamaTask = null;
+        Task<Lyrics>? geniusTask = null;
+
+        if (isRussian)
+        {
+            textLyricsTask = FetchTextLyricsAsync(title, artist, linked.Token);
+            tasks.Add(textLyricsTask);
+        }
+        else
+        {
+            amalgamaTask = FetchAmalgamaAsync(title, artist, linked.Token);
+            tasks.Add(amalgamaTask);
+            tasks.Add(FetchFallbackAsync(title, artist, linked.Token));
+        }
+
+        geniusTask = FetchGeniusAsync(title, artist, linked.Token);
+        tasks.Add(geniusTask);
+
+        Lyrics? best = fallbackPlain != null && fallbackPlain.Status != LyricsStatus.NotFound && fallbackPlain.Status != LyricsStatus.Error
+            ? fallbackPlain
+            : null;
+        bool hasInstrumental = best?.Status == LyricsStatus.Instrumental;
+        int errorCount = 0;
+
+        while (tasks.Count > 0)
+        {
+            var completed = await Task.WhenAny(tasks);
+            tasks.Remove(completed);
+
+            Lyrics result;
+            try { result = await completed; }
+            catch { result = Lyrics.Error; }
+
+            if (result.Status == LyricsStatus.Instrumental)
+            {
+                hasInstrumental = true;
+            }
+            else if (result.Status == LyricsStatus.Error)
+            {
+                errorCount++;
+            }
+            else if (result.Status == LyricsStatus.Plain)
+            {
+                // Для русских песен аутентичный текст на кириллице с text-lyrics.ru возвращаем сразу
+                if (isRussian && ReferenceEquals(completed, textLyricsTask))
+                {
+                    linked.Cancel();
+                    return result;
+                }
+
+                // Для зарубежных песен чистый текст с amalgama-lab.com возвращаем сразу
+                if (!isRussian && ReferenceEquals(completed, amalgamaTask))
+                {
+                    linked.Cancel();
+                    return result;
+                }
+
+                best ??= result;
+            }
+
+            if (best != null && best.Status == LyricsStatus.Plain)
+            {
+                if (isRussian && textLyricsTask != null && !tasks.Contains(textLyricsTask))
+                {
+                    linked.Cancel();
+                    return best;
+                }
+                if (!isRussian && amalgamaTask != null && !tasks.Contains(amalgamaTask))
+                {
+                    linked.Cancel();
+                    return best;
+                }
+            }
+        }
+
+        if (best != null)
+            return best;
+        if (hasInstrumental)
+            return Lyrics.Instrumental;
+        return errorCount == (isRussian ? 2 : 3) ? Lyrics.Error : Lyrics.NotFound;
+    }
+
+    /// <summary>
     /// Вторая очередь: Genius, NetEase и text-lyrics.ru одновременно. Синхронный текст NetEase лучше всего,
-    /// потом полный текст Genius, потом text-lyrics.ru, потом текст NetEase без меток.
+    /// потом полный текст Genius (или text-lyrics.ru для русских песен), потом остальное.
+    /// Не ждёт медленные или заблокированные сервисы, если уже найден подходящий ответ.
     /// </summary>
     internal static async Task<Lyrics> FetchSecondTierAsync(string title, string? artist, double seconds, double tolerance, CancellationToken ct)
     {
-        var genius = FetchGeniusAsync(title, artist, ct);
-        var netease = FetchNetEaseAsync(title, artist, seconds, tolerance, ct);
-        var textLyrics = FetchTextLyricsAsync(title, artist, ct);
-        await Task.WhenAll(genius, netease, textLyrics);
-        return PickSecondTier(genius.Result, netease.Result, textLyrics.Result);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var geniusTask = FetchGeniusAsync(title, artist, linked.Token);
+        var neteaseTask = FetchNetEaseAsync(title, artist, seconds, tolerance, linked.Token);
+        var textLyricsTask = FetchTextLyricsAsync(title, artist, linked.Token);
+
+        var pending = new List<Task<Lyrics>> { geniusTask, neteaseTask, textLyricsTask };
+        bool isRussian = HasCyrillic(title) || (artist != null && HasCyrillic(artist));
+
+        Lyrics? bestPlain = null;
+        int errorCount = 0;
+        bool hasInstrumental = false;
+
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending);
+            pending.Remove(completed);
+
+            Lyrics result;
+            try { result = await completed; }
+            catch { result = Lyrics.Error; }
+
+            if (result.Status == LyricsStatus.Synced)
+            {
+                linked.Cancel();
+                return result;
+            }
+
+            if (result.Status == LyricsStatus.Instrumental)
+            {
+                hasInstrumental = true;
+            }
+            else if (result.Status == LyricsStatus.Error)
+            {
+                errorCount++;
+            }
+            else if (result.Status == LyricsStatus.Plain)
+            {
+                if (isRussian && ReferenceEquals(completed, textLyricsTask))
+                {
+                    // Для русских песен текст с text-lyrics.ru аутентичный на кириллице.
+                    // Не ждём заблокированный Genius или китайский NetEase
+                    linked.Cancel();
+                    return result;
+                }
+
+                if (bestPlain == null)
+                    bestPlain = result;
+                else if (isRussian && ReferenceEquals(completed, textLyricsTask))
+                    bestPlain = result;
+                else if (!isRussian && ReferenceEquals(completed, geniusTask))
+                    bestPlain = result;
+            }
+
+            // Если уже есть обычный текст, и длительность не известна (нет смысла ждать NetEase для синхронизации)
+            // или NetEase уже закончил работу:
+            if (bestPlain != null && (seconds <= 0 || !pending.Contains(neteaseTask)))
+            {
+                linked.Cancel();
+                return bestPlain;
+            }
+        }
+
+        if (bestPlain != null)
+            return bestPlain;
+        if (hasInstrumental)
+            return Lyrics.Instrumental;
+        return errorCount == 3 ? Lyrics.Error : Lyrics.NotFound;
     }
 
     internal static Lyrics PickSecondTier(Lyrics genius, Lyrics netease, Lyrics? textLyrics = null)
@@ -461,26 +863,27 @@ public static class LyricsService
             return stored.Lyrics;
         }
 
-        // Первая очередь — lrclib и lyrics.ovh одновременно: резервная база не ждёт, пока lrclib ответит.
-        // Её текст нужен, только если lrclib не знает песню или недоступен (5xx).
-        using var tier1 = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var ovh = FetchFallbackAsync(title, artist, tier1.Token);
+        // 1. Первая очередь: параллельный поиск синхронных текстов (дорожки с таймингами / LRC)
+        // одновременно по всем сервисам (lrclib.net, NetEase, Kugou).
+        // Первый найденный качественный синхронный текст (не транслит) возвращается сразу.
+        var (synced, plainFallback) = await FetchTimedAsync(title, artist, album, duration, ct);
         Lyrics lyrics;
-        try { lyrics = await FetchAsync(title, artist, album, duration, ct); }
-        catch (Exception) { lyrics = Lyrics.Error; } // нет сети, таймаут, отмена, кривой ответ
 
-        if (lyrics.Status is LyricsStatus.Error or LyricsStatus.NotFound)
-            lyrics = await ovh;
-        else
-            tier1.Cancel();
-
-        // Вторая очередь — Genius и NetEase: когда первая ничего не нашла или нашла только транслит
-        bool missing = lyrics.Status is LyricsStatus.Error or LyricsStatus.NotFound;
-        if (missing || Rank(lyrics) >= TranslitPenalty)
+        if (synced != null && Rank(synced) < TranslitPenalty)
         {
-            var second = await FetchSecondTierAsync(title, artist, Math.Round(duration.TotalSeconds), DurationTolerance, ct);
-            if (missing ? second.Status != LyricsStatus.Error || lyrics.Status == LyricsStatus.Error : Rank(second) < Rank(lyrics))
-                lyrics = second;
+            lyrics = synced;
+        }
+        else
+        {
+            // 2. Вторая очередь: если синхронного текста нет (или найден только транслит),
+            // ищем обычный текст песни на сайтах без таймингов (text-lyrics.ru, amalgama-lab, Genius, lyrics.ovh).
+            var plain = await FetchPlainTierAsync(title, artist, plainFallback, ct);
+            if (synced != null && (plain.Status is LyricsStatus.NotFound or LyricsStatus.Error || Rank(synced) <= Rank(plain)))
+                lyrics = synced;
+            else if (plain.Status != LyricsStatus.NotFound && plain.Status != LyricsStatus.Error)
+                lyrics = plain;
+            else
+                lyrics = synced ?? plain;
         }
 
         if (lyrics.Status != LyricsStatus.Error && !ct.IsCancellationRequested)
@@ -530,7 +933,10 @@ public static class LyricsService
         // Первая очередь: lrclib и резервная база сразу для всех прочтений.
         // Точный запрос get на lrclib тут не помогает (длительность ролика не та) и медленный — только поиск.
         using var tier1 = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var fallbacks = candidates.Select(c => FetchFallbackAsync(c.Title, c.Artist, tier1.Token)).ToArray();
+        var fallbacks = candidates.Select(c =>
+            HasCyrillic(c.Title) || (c.Artist != null && HasCyrillic(c.Artist))
+                ? FetchTextLyricsAsync(c.Title, c.Artist, tier1.Token)
+                : FetchFallbackAsync(c.Title, c.Artist, tier1.Token)).ToArray();
         var results = await Task.WhenAll(candidates.Select(c => SearchCandidateAsync(c.Title, c.Artist, ct)));
 
         var result = PickVideo(results, seconds);
@@ -548,22 +954,33 @@ public static class LyricsService
         }
         else
         {
-            // lrclib не знает ни одного прочтения — берём текст из резервной базы
-            var texts = await Task.WhenAll(fallbacks);
-            int found = Array.FindIndex(texts, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
-            if (found < 0)
+            // lrclib не нашёл — проверяем Kugou для главного прочтения:
+            var (topTitle, topArtist) = candidates[0];
+            var kugou = await FetchKugouAsync(topTitle, topArtist, seconds, VideoDurationTolerance, ct);
+            if (kugou.Status == LyricsStatus.Synced && Rank(kugou) < TranslitPenalty)
             {
-                // И там нет — вторая очередь (Genius и NetEase), тоже сразу для всех прочтений.
-                // Синхронный текст любого прочтения важнее обычного.
-                var second = await Task.WhenAll(candidates.Select(c =>
-                    FetchSecondTierAsync(c.Title, c.Artist, seconds, VideoDurationTolerance, ct)));
-                found = Array.FindIndex(second, l => l.Status == LyricsStatus.Synced);
-                if (found < 0)
-                    found = Array.FindIndex(second, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
-                texts = texts.Zip(second, (ovh, s) => s.Status == LyricsStatus.Error ? ovh : s).ToArray();
+                result = (kugou, 0);
+                tier1.Cancel();
             }
-            bool anyFailed = results.Any(r => r == null) && texts.All(l => l.Status != LyricsStatus.NotFound);
-            result = found >= 0 ? (texts[found], found) : (anyFailed ? Lyrics.Error : Lyrics.NotFound, 0);
+            else
+            {
+                // Нет синхронизации — берём текст из резервной базы
+                var texts = await Task.WhenAll(fallbacks);
+                int found = Array.FindIndex(texts, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
+                if (found < 0)
+                {
+                    // И там нет — вторая очередь (Genius, NetEase, amalgama-lab), берём до двух лучших прочтений
+                    var topCandidates = candidates.Take(2).ToList();
+                    var second = await Task.WhenAll(topCandidates.Select(c =>
+                        FetchPlainTierAsync(c.Title, c.Artist, null, ct)));
+                    found = Array.FindIndex(second, l => l.Status == LyricsStatus.Synced);
+                    if (found < 0)
+                        found = Array.FindIndex(second, l => l.Status is LyricsStatus.Plain or LyricsStatus.Instrumental);
+                    texts = texts.Take(topCandidates.Count).Zip(second, (ovh, s) => s.Status == LyricsStatus.Error ? ovh : s).ToArray();
+                }
+                bool anyFailed = results.Any(r => r == null) && texts.All(l => l.Status != LyricsStatus.NotFound);
+                result = found >= 0 ? (texts[found], found) : (anyFailed ? Lyrics.Error : Lyrics.NotFound, 0);
+            }
         }
 
         // «Не нашлось», когда часть запросов к lrclib сорвалась, тоже не запоминаем: за долгий джем
@@ -639,7 +1056,7 @@ public static class LyricsService
                 }
                 if (attempt > 0 || response.StatusCode is not (HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests))
                     return null;
-                await Task.Delay(400, ct);
+                await Task.Delay(200, ct);
             }
         }
         catch (Exception)
@@ -727,11 +1144,13 @@ public static class LyricsService
     {
         try
         {
-            using var response = await Http.GetAsync("get?" + query, ct);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMilliseconds(1800));
+            using var response = await Http.GetAsync("get?" + query, cts.Token);
             if (!response.IsSuccessStatusCode)
                 return new();
-            await using var stream = await response.Content.ReadAsStreamAsync(ct);
-            return await JsonSerializer.DeserializeAsync<LrcLibTrack>(stream, Json, ct) is { } track ? new() { track } : new();
+            await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+            return await JsonSerializer.DeserializeAsync<LrcLibTrack>(stream, Json, cts.Token) is { } track ? new() { track } : new();
         }
         catch (Exception)
         {
@@ -816,6 +1235,17 @@ public static class LyricsService
     /// <summary>Слово, какие бывают только в русском транслите: zh, kh, yu, ya, yo (кроме you), iy, yy.</summary>
     private static readonly Regex TranslitWord = new(@"^\p{L}*(?:zh|kh|yu|ya|yo(?!u)|iy|yy)\p{L}*$", RegexOptions.IgnoreCase);
     private static readonly char[] WordSeparators = { ' ', ',', '.', '!', '?', ';', ':', '"', '«', '»', '(', ')', '-', '—', '…', '\'' };
+
+    /// <summary>Есть ли в тексте кириллические буквы (русские названия треков или исполнителей).</summary>
+    internal static bool HasCyrillic(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return false;
+        foreach (var c in text)
+            if (c is >= 'Ѐ' and <= 'ӿ')
+                return true;
+        return false;
+    }
 
     /// <summary>
     /// Русский текст латиницей («Ya prishol daty etu piesnyu»). Признак — доля слов с сочетаниями, которых в английском

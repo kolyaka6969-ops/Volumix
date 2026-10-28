@@ -188,10 +188,23 @@ public class LyricsTests
         Assert.Equal(LyricsStatus.NotFound,
             (await LyricsService.FetchTextLyricsAsync("Прощаться", "Абракадабра Несуществующая", CancellationToken.None)).Status);
 
-        // Весь путь: первая очередь её не знает, вторая находит на text-lyrics.ru
+        // Весь путь: первая очередь проверяет text-lyrics.ru параллельно для русских песен
         var found = await LyricsService.FindAsync("Прощаться", "Грель", null, TimeSpan.FromSeconds(183), CancellationToken.None);
         Assert.Equal(LyricsStatus.Plain, found.Status);
         Assert.Equal("Когда затянутся раны неба", found.Lines[0].Text);
+    }
+
+    [SkippableFact]
+    public async Task RussianTrackSearchedQuickly()
+    {
+        LyricsCache.Folder = Path.Combine(Path.GetTempPath(), "volumix-tests-" + Guid.NewGuid().ToString("N"));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var lyrics = await LyricsService.FindAsync("Прощаться", "Грель", null, TimeSpan.FromSeconds(183), CancellationToken.None);
+        sw.Stop();
+        Skip.If(lyrics.Status == LyricsStatus.Error, "Сервис недоступен");
+
+        Assert.Equal(LyricsStatus.Plain, lyrics.Status);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3.5), $"Поиск занял слишком много времени: {sw.Elapsed.TotalSeconds:N1} с");
     }
 
     [SkippableFact]
@@ -525,6 +538,76 @@ public class LyricsTests
             Assert.Equal(LyricsStatus.Synced, lyrics.Status);
             Assert.Contains(lyrics.Lines, l => l.Text.Contains("песню"));
         }
+    }
+
+    [Fact]
+    public void ParsesAmalgamaPage()
+    {
+        const string html = """
+            <div id="click_area">
+            <div class="string_container"><div class="original">I'm tired of being what you want me to be</div><div class="translate">Перевод 1</div></div>
+            <div class="string_container"><div class="original">Feeling so faithless lost under the surface</div><div class="translate">Перевод 2</div></div>
+            <div class="empty_container"><div class="original"><br /></div><div class="translate"><br /></div></div>
+            <div class="string_container"><div class="original">Don't know what you're expecting of me</div><div class="translate">Перевод 3</div></div>
+            <div class="string_container"><div class="original"><strong>Numb (второй перевод)</strong></div></div>
+            <div class="string_container"><div class="original">Второй перевод строки</div></div>
+            </div>
+            """;
+        var parsed = LyricsService.ParseAmalgamaPage(html);
+        Assert.Equal("I'm tired of being what you want me to be\nFeeling so faithless lost under the surface\n\nDon't know what you're expecting of me", parsed);
+        Assert.Null(LyricsService.ParseAmalgamaPage("<html>нет текста</html>"));
+    }
+
+    [Fact]
+    public void GeneratesAmalgamaSlug()
+    {
+        Assert.Equal("linkin_park", LyricsService.Slug("Linkin Park"));
+        Assert.Equal("beatles", LyricsService.Slug("The Beatles"));
+        Assert.Equal("don_t_stop_believin", LyricsService.Slug("Don't Stop Believin'"));
+        Assert.Equal("numb", LyricsService.Slug("Numb (feat. Jay-Z)"));
+    }
+
+    [SkippableFact]
+    public async Task FindsLyricsOnAmalgama()
+    {
+        var lyrics = await LyricsService.FetchAmalgamaAsync("Numb", "Linkin Park", CancellationToken.None);
+        Skip.If(lyrics.Status == LyricsStatus.Error, "amalgama-lab.com недоступен");
+
+        Assert.Equal(LyricsStatus.Plain, lyrics.Status);
+        Assert.Equal("I'm tired of being what you want me to be", lyrics.Lines[0].Text);
+        Assert.Contains(lyrics.Lines, l => l.Text.Contains("undertow", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(LyricsStatus.NotFound,
+            (await LyricsService.FetchAmalgamaAsync("UnknownNonExistingSong123", "UnknownArtist123", CancellationToken.None)).Status);
+    }
+
+    [SkippableFact]
+    public async Task FindsSyncedLyricsOnKugou()
+    {
+        var lyrics = await LyricsService.FetchKugouAsync("Numb", "Linkin Park", 187, 3, CancellationToken.None);
+        Skip.If(lyrics.Status == LyricsStatus.Error, "kugou.com недоступен");
+
+        Assert.Equal(LyricsStatus.Synced, lyrics.Status);
+        Assert.Contains(lyrics.Lines, l => l.Text.Contains("tired of being", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [SkippableFact]
+    public async Task FindsRussianSyncedLyricsOnKugou()
+    {
+        var lyrics = await LyricsService.FetchKugouAsync("Группа крови", "Кино", 284, 5, CancellationToken.None);
+        Skip.If(lyrics.Status == LyricsStatus.Error, "kugou.com недоступен");
+
+        Assert.Equal(LyricsStatus.Synced, lyrics.Status);
+        Assert.Contains(lyrics.Lines, l => l.Text.Contains("крови", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [SkippableFact]
+    public async Task TimedTierPrefersSyncedLyrics()
+    {
+        var (synced, _) = await LyricsService.FetchTimedAsync("Группа крови", "Кино", null, TimeSpan.FromSeconds(284), CancellationToken.None);
+        Skip.If(synced == null || synced.Status == LyricsStatus.Error, "Сервисы недоступны");
+
+        Assert.NotNull(synced);
+        Assert.Equal(LyricsStatus.Synced, synced.Status);
     }
 
     private static void Pump(double seconds)

@@ -88,7 +88,9 @@ internal static class CoverArtService
         {
             try
             {
-                var (geniusArt, _) = await FromGeniusAsync(title, artist, ct);
+                using var geniusCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                using var linkedGenius = CancellationTokenSource.CreateLinkedTokenSource(ct, geniusCts.Token);
+                var (geniusArt, _) = await FromGeniusAsync(title, artist, linkedGenius.Token);
                 art = geniusArt;
             }
             catch (Exception)
@@ -127,7 +129,7 @@ internal static class CoverArtService
 
     private static HttpClient CreateHttp()
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"Volumix/{typeof(CoverArtService).Assembly.GetName().Version?.ToString(3)}");
         return http;
     }

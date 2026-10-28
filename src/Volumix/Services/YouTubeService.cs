@@ -45,7 +45,7 @@ internal static class YouTubeService
     private static HttpClient CreateClient()
     {
         var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All, UseCookies = false };
-        var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
+        var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(4) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36");
         http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("ru,en;q=0.8");
         // Без него в Европе вместо выдачи приходит страница согласия на куки
@@ -65,7 +65,7 @@ internal static class YouTubeService
                 return null;
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3.5));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
                 var response = await Http.GetAsync("https://www.youtube.com/watch?v=" + id, cts.Token);
                 if (!response.IsSuccessStatusCode)
                     return null;
