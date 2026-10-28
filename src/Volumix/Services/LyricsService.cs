@@ -939,7 +939,7 @@ public static class LyricsService
                 : FetchFallbackAsync(c.Title, c.Artist, tier1.Token)).ToArray();
         var results = await Task.WhenAll(candidates.Select(c => SearchCandidateAsync(c.Title, c.Artist, ct)));
 
-        var result = PickVideo(results, seconds);
+        var result = PickVideo(results, seconds, candidates);
         if (result is { } picked)
         {
             tier1.Cancel();
@@ -1000,20 +1000,31 @@ public static class LyricsService
     /// раньше по порядку прочтений (так синхронный текст любого прочтения важнее обычного), потом любой найденный
     /// текст без меток времени.
     /// </summary>
-    internal static (Lyrics Lyrics, int Index)? PickVideo(IReadOnlyList<List<LrcLibTrack>?> results, double seconds)
+    internal static (Lyrics Lyrics, int Index)? PickVideo(
+        IReadOnlyList<List<LrcLibTrack>?> results,
+        double seconds,
+        IReadOnlyList<(string Title, string? Artist)>? candidates = null)
     {
+        var primaryArtist = candidates?.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Artist)).Artist;
         (Lyrics Lyrics, int Index, int Rank)? best = null;
         for (int i = 0; i < results.Count; i++)
-            if (results[i] is { } found && PickTrack(found, seconds, VideoDurationTolerance) is { } p &&
+        {
+            var cand = candidates != null && i < candidates.Count ? candidates[i] : (Title: (string?)null, Artist: (string?)null);
+            var effectiveArtist = cand.Artist ?? primaryArtist;
+            if (results[i] is { } found && PickTrack(found, seconds, VideoDurationTolerance, cand.Title, effectiveArtist) is { } p &&
                 (best == null || p.Rank < best.Value.Rank))
                 best = (p.Lyrics, i, p.Rank);
+        }
         if (best is { } b)
             return (b.Lyrics, b.Index);
 
         // Длительность не совпала ни у кого (длинный клип, live) — синхронизация не сойдётся, но сам текст верный
         for (int i = 0; i < results.Count; i++)
         {
-            var plain = results[i]?.Select(ToLyrics).OfType<Lyrics>().MinBy(Rank);
+            var cand = candidates != null && i < candidates.Count ? candidates[i] : (Title: (string?)null, Artist: (string?)null);
+            var effectiveArtist = cand.Artist ?? primaryArtist;
+            var matchingTracks = results[i]?.Where(t => IsCandidateMatch(t, cand.Title, effectiveArtist)).ToList();
+            var plain = matchingTracks?.Select(ToLyrics).OfType<Lyrics>().MinBy(Rank);
             if (plain != null)
                 return (plain.Status == LyricsStatus.Synced ? Lyrics.FromPlain(string.Join("\n", plain.Lines.Select(l => l.Text))) : plain, i);
         }
@@ -1124,7 +1135,7 @@ public static class LyricsService
                 failed = true;
                 continue;
             }
-            if (PickTrack(found, seconds, DurationTolerance) is { } p && p.Rank < bestRank)
+            if (PickTrack(found, seconds, DurationTolerance, title, artist) is { } p && p.Rank < bestRank)
                 (best, bestRank) = (p.Lyrics, p.Rank);
             if (bestRank == 0)
             {
@@ -1179,9 +1190,21 @@ public static class LyricsService
         return variants;
     }
 
+    private static bool IsCandidateMatch(LrcLibTrack track, string? title, string? artist)
+    {
+        if (string.IsNullOrWhiteSpace(artist) || string.IsNullOrWhiteSpace(track.ArtistName))
+            return true;
+        return CoverArtService.Score(title ?? track.TrackName ?? "", artist, track.TrackName ?? title ?? "", track.ArtistName) >= 4;
+    }
+
     /// <summary>Лучший из найденных с подходящей длительностью: меньший <see cref="Rank"/>, потом ближе по длительности.</summary>
-    private static (Lyrics Lyrics, int Rank)? PickTrack(List<LrcLibTrack> found, double seconds, double tolerance) =>
-        found.Where(t => seconds <= 0 || Math.Abs(t.Duration - seconds) <= tolerance)
+    internal static (Lyrics Lyrics, int Rank)? PickTrack(
+        List<LrcLibTrack> found,
+        double seconds,
+        double tolerance,
+        string? title = null,
+        string? artist = null) =>
+        found.Where(t => (seconds <= 0 || Math.Abs(t.Duration - seconds) <= tolerance) && IsCandidateMatch(t, title, artist))
             .Select(t => (Track: t, Lyrics: ToLyrics(t)))
             .Where(x => x.Lyrics != null)
             .Select(x => (x.Track, Lyrics: x.Lyrics!, Rank: Rank(x.Lyrics!)))
@@ -1345,5 +1368,7 @@ public static class LyricsService
         public bool Instrumental { get; set; }
         public string? PlainLyrics { get; set; }
         public string? SyncedLyrics { get; set; }
+        public string? TrackName { get; set; }
+        public string? ArtistName { get; set; }
     }
 }

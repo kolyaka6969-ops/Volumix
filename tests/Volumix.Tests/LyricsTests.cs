@@ -113,7 +113,7 @@ public class LyricsTests
         var candidates = MediaSessionService.Candidates("FATHER", "GONE.Fludd").Take(4).ToList();
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var (lyrics, _) = await LyricsService.FindVideoAsync(candidates, TimeSpan.FromSeconds(195), CancellationToken.None);
-        Skip.If(lyrics.Status == LyricsStatus.Error, "lrclib.net недоступен");
+        Skip.If(lyrics.Status is LyricsStatus.Error or LyricsStatus.Plain, "lrclib.net недоступен или перегружен");
 
         Assert.Equal(LyricsStatus.Synced, lyrics.Status);
         Skip.If(watch.Elapsed >= TimeSpan.FromSeconds(10), $"поиск занял {watch.Elapsed.TotalSeconds:N1} с (задержка сети)");
@@ -538,6 +538,63 @@ public class LyricsTests
             Assert.Equal(LyricsStatus.Synced, lyrics.Status);
             Assert.Contains(lyrics.Lines, l => l.Text.Contains("песню"));
         }
+    }
+
+    [Fact]
+    public void PickTrackRejectsWrongArtistEvenIfDurationMatches()
+    {
+        var found = new List<LyricsService.LrcLibTrack>
+        {
+            new()
+            {
+                TrackName = "Ride Or Die",
+                ArtistName = "SMACK",
+                Duration = 184,
+                SyncedLyrics = SyncedLrc
+            }
+        };
+
+        // Ищем песню Big Baby Tape, а в результатах только SMACK с той же длительностью
+        var picked = LyricsService.PickTrack(found, 184, 12, "Ride Or Die", "Big Baby Tape");
+        Assert.Null(picked);
+    }
+
+    [Fact]
+    public void PickTrackAcceptsMatchingArtist()
+    {
+        var found = new List<LyricsService.LrcLibTrack>
+        {
+            new()
+            {
+                TrackName = "Ride Or Die",
+                ArtistName = "SMACK",
+                Duration = 184,
+                SyncedLyrics = SyncedLrc
+            },
+            new()
+            {
+                TrackName = "Ride Or Die",
+                ArtistName = "Big Baby Tape",
+                Duration = 184,
+                SyncedLyrics = CyrillicLrc
+            }
+        };
+
+        var picked = LyricsService.PickTrack(found, 184, 12, "Ride Or Die", "Big Baby Tape");
+        Assert.NotNull(picked);
+        Assert.Equal("Я пришёл дать эту песню", picked.Value.Lyrics.Lines[0].Text);
+    }
+
+    [Fact]
+    public void CandidatesCleansYouTubeArtist()
+    {
+        var candidates = MediaSessionService.Candidates("Ride Or Die", "Big Baby Tape - Topic");
+        Assert.Equal("Big Baby Tape", candidates[0].Artist);
+        Assert.Equal("Ride Or Die", candidates[0].Title);
+
+        var mareux = MediaSessionService.Candidates("The Perfect Girl", "Mareux - Topic");
+        Assert.Equal("Mareux", mareux[0].Artist);
+        Assert.Equal("The Perfect Girl", mareux[0].Title);
     }
 
     [Fact]

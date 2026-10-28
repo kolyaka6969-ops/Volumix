@@ -761,8 +761,10 @@ public sealed class MediaSessionService : IDisposable
         if (string.IsNullOrWhiteSpace(artist))
             return null;
         var name = artist.Trim();
+        if (string.Equals(name, "Topic", StringComparison.OrdinalIgnoreCase))
+            return null;
         var stripped = false;
-        foreach (var suffix in new[] { " - Topic", " – Topic", "VEVO", " Official" })
+        foreach (var suffix in new[] { " - Topic", " – Topic", " — Topic", "VEVO", " Official", " Official Channel" })
             if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && name.Length > suffix.Length)
             {
                 name = name[..^suffix.Length].Trim();
@@ -771,7 +773,7 @@ public sealed class MediaSessionService : IDisposable
         // «TheCranberriesVEVO» → «TheCranberries» → «The Cranberries»
         if (stripped && !name.Contains(' '))
             name = Regex.Replace(name, @"(?<=[\p{Ll}\d])(?=\p{Lu})", " ");
-        return name.Length == 0 ? artist : name;
+        return name.Length == 0 ? null : name;
     }
 
     /// <summary>
@@ -785,7 +787,7 @@ public sealed class MediaSessionService : IDisposable
         void Add(string? candidateTitle, string? candidateArtist)
         {
             candidateTitle = candidateTitle?.Trim(' ', '-', '—', '–', '|');
-            candidateArtist = string.IsNullOrWhiteSpace(candidateArtist) ? null : candidateArtist.Trim();
+            candidateArtist = CleanChannel(candidateArtist);
             if (string.IsNullOrWhiteSpace(candidateTitle) || candidateTitle.Length < 2)
                 return;
             foreach (var item in list)
@@ -797,19 +799,20 @@ public sealed class MediaSessionService : IDisposable
             list.Add((candidateTitle, candidateArtist));
         }
 
-        Add(title, artist);
+        var cleanArtist = CleanChannel(artist);
+        Add(title, cleanArtist);
         // Скобки — обычно пояснение к ролику, а не часть названия песни
         var stripped = WithoutBrackets(title);
         // «See You Again ft. Charlie Puth Furious 7 Soundtrack» → «See You Again»: в каталогах гость не в названии
         var core = WithoutFeat(stripped);
         if (core != stripped)
         {
-            if (artist != null)
-                Add(core, artist);
+            if (cleanArtist != null)
+                Add(core, cleanArtist);
             Split(core, Add);
         }
         Split(stripped, Add);
-        Add(stripped, artist);
+        Add(stripped, cleanArtist);
         Add(stripped, null);
         Split(title, Add);
         return list;
